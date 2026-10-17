@@ -1,0 +1,11 @@
+{
+  "n_nodes": 18,
+  "n_steps": 120,
+  "dt": 0.01,
+  "n_spans": 3,
+  "pile_diameter": 1.2,
+  "pile_depth": 20.0,
+  "pga": 0.4,
+  "angle_deg": 0.0,
+  "seed": 123
+}

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+*.h5
+*.hdf5
+!example_inputs/*.h5

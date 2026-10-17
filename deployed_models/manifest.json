@@ -1,0 +1,250 @@
+{
+  "format": "ssi-checkpoint-deployment-v1",
+  "models": [
+    {
+      "name": "gnn_tcn",
+      "fold": "fold_1",
+      "file": "fold_1/gnn_tcn.pt",
+      "sha256": "c60ace97632f47e35b349175b66b021ae8925477e44b727538c5eb3bc2c70df5",
+      "bytes": 1702075
+    },
+    {
+      "name": "gpr",
+      "fold": "fold_1",
+      "file": "fold_1/gpr.joblib",
+      "sha256": "9fe501cd3c267f0783d8db25ffe8cc76bbbc27c1498ea9a0f369c1e219543195",
+      "bytes": 5732479
+    },
+    {
+      "name": "graph_operator",
+      "fold": "fold_1",
+      "file": "fold_1/graph_operator.pt",
+      "sha256": "235cbe19a8233a4f8cd60f38cc9ac8f6efcd5af27c448252f1964b33b078e0fa",
+      "bytes": 816957
+    },
+    {
+      "name": "graph_transformer",
+      "fold": "fold_1",
+      "file": "fold_1/graph_transformer.pt",
+      "sha256": "39d00383deb8994f23d1df5fba07aa4589e1a26fa2752d0c5412ce39c0fbc0ce",
+      "bytes": 1175557
+    },
+    {
+      "name": "meshgraphnet",
+      "fold": "fold_1",
+      "file": "fold_1/meshgraphnet.pt",
+      "sha256": "829cfd4eef72cca501f12071ad33370398a795390878bea972fe3514686636eb",
+      "bytes": 3397265
+    },
+    {
+      "name": "mlp",
+      "fold": "fold_1",
+      "file": "fold_1/mlp.pt",
+      "sha256": "10e7fd830f2e372a74360fb64c1a2ea62f6c037d10027806a0741c8e2432203b",
+      "bytes": 364401
+    },
+    {
+      "name": "tcn_lstm",
+      "fold": "fold_1",
+      "file": "fold_1/tcn_lstm.pt",
+      "sha256": "fc2bdb3cab122757d59db8e85762da2200990005799063198813be8050d3b607",
+      "bytes": 1010237
+    },
+    {
+      "name": "gnn_tcn",
+      "fold": "fold_2",
+      "file": "fold_2/gnn_tcn.pt",
+      "sha256": "df2cb6b907fdd70cd3e40f851d5c69f8eab01b2318ad51a0cdc759634b4988cd",
+      "bytes": 1702075
+    },
+    {
+      "name": "gpr",
+      "fold": "fold_2",
+      "file": "fold_2/gpr.joblib",
+      "sha256": "3dfb1d0e8a1a0ebf57b6a7ba5f5f5e626033bed5df42007b1576cb0d2d62f6b3",
+      "bytes": 5763327
+    },
+    {
+      "name": "graph_operator",
+      "fold": "fold_2",
+      "file": "fold_2/graph_operator.pt",
+      "sha256": "1f33ce43138b574675901b3ea72555e21da40d142f6cb32affa7b9f3f08803f5",
+      "bytes": 816957
+    },
+    {
+      "name": "graph_transformer",
+      "fold": "fold_2",
+      "file": "fold_2/graph_transformer.pt",
+      "sha256": "322ed4e4234cdd671f45af188fbcf420ca2e6436e30a15a7e1813a28f8d670d3",
+      "bytes": 1175557
+    },
+    {
+      "name": "meshgraphnet",
+      "fold": "fold_2",
+      "file": "fold_2/meshgraphnet.pt",
+      "sha256": "41ff69e599096920063ea40cce0d54e78a7fc387477873397a36d57edb7efe6a",
+      "bytes": 3397265
+    },
+    {
+      "name": "mlp",
+      "fold": "fold_2",
+      "file": "fold_2/mlp.pt",
+      "sha256": "ceb1f020e22d0841d164bec31806a1494cdce03ea46e0c1ed7fe2098175c9856",
+      "bytes": 1012693
+    },
+    {
+      "name": "tcn_lstm",
+      "fold": "fold_2",
+      "file": "fold_2/tcn_lstm.pt",
+      "sha256": "5c0e89d7f19be031f6bcd329031b08d21f81b5044d2034020293631d05ccd23a",
+      "bytes": 1010237
+    },
+    {
+      "name": "gnn_tcn",
+      "fold": "fold_3",
+      "file": "fold_3/gnn_tcn.pt",
+      "sha256": "a980b8c1b6d21217dd27bd527245adff82b792f7e7ce0ba0c7010298664a18c0",
+      "bytes": 846139
+    },
+    {
+      "name": "gpr",
+      "fold": "fold_3",
+      "file": "fold_3/gpr.joblib",
+      "sha256": "c755801d1d6e96babd8501c2042d3e43056a51f0f0a5254e5f645ee9fdc2c228",
+      "bytes": 5726823
+    },
+    {
+      "name": "graph_operator",
+      "fold": "fold_3",
+      "file": "fold_3/graph_operator.pt",
+      "sha256": "920ed35facef3b9905707e76241249c826d20745d9ef3164319b528962a1f318",
+      "bytes": 816957
+    },
+    {
+      "name": "graph_transformer",
+      "fold": "fold_3",
+      "file": "fold_3/graph_transformer.pt",
+      "sha256": "7d8baf79ce146c37b07d68915532ef219dd51f2529fb60390b172166e4c288a3",
+      "bytes": 1400289
+    },
+    {
+      "name": "meshgraphnet",
+      "fold": "fold_3",
+      "file": "fold_3/meshgraphnet.pt",
+      "sha256": "5d702fc3d4172e5184ed921dd095cfd6fd77f5f8f71d0e9fa66e311820b8e8a2",
+      "bytes": 3397265
+    },
+    {
+      "name": "mlp",
+      "fold": "fold_3",
+      "file": "fold_3/mlp.pt",
+      "sha256": "360f4dcac472174606c548dc4a4b56a65f0adbdcaf9175bb3e397eeae3f15400",
+      "bytes": 1012693
+    },
+    {
+      "name": "tcn_lstm",
+      "fold": "fold_3",
+      "file": "fold_3/tcn_lstm.pt",
+      "sha256": "06ad1a537a67147b92280b0d123f78380034ae5b0b0b95551afde915397cf45b",
+      "bytes": 1161909
+    },
+    {
+      "name": "gnn_tcn",
+      "fold": "fold_4",
+      "file": "fold_4/gnn_tcn.pt",
+      "sha256": "361892bb94db49feb48a305227bf3280c17fc40127fa81a63ea2a79d95ba86d1",
+      "bytes": 1702075
+    },
+    {
+      "name": "gpr",
+      "fold": "fold_4",
+      "file": "fold_4/gpr.joblib",
+      "sha256": "e2b9fede37657126da25ebdf086a24da2e259e901c6f00773c9eb62cb57a5b6c",
+      "bytes": 5745698
+    },
+    {
+      "name": "graph_operator",
+      "fold": "fold_4",
+      "file": "fold_4/graph_operator.pt",
+      "sha256": "794b6d5d66e1ea69155749e6b0e6f456ebd5be59f07580459ebd73f4fd1dd0d0",
+      "bytes": 816957
+    },
+    {
+      "name": "graph_transformer",
+      "fold": "fold_4",
+      "file": "fold_4/graph_transformer.pt",
+      "sha256": "5459ec894f6b4b33f31769e9f16095fc72a54dae4d5e49aeeb4eca4e623f8d70",
+      "bytes": 1175557
+    },
+    {
+      "name": "meshgraphnet",
+      "fold": "fold_4",
+      "file": "fold_4/meshgraphnet.pt",
+      "sha256": "fb98f6d273131c3126267fb5a046887f260053c77e5ce487eed2601d1b74f1cb",
+      "bytes": 3397265
+    },
+    {
+      "name": "mlp",
+      "fold": "fold_4",
+      "file": "fold_4/mlp.pt",
+      "sha256": "e564710280de28ac3116a754e5fa1b5269cd5afcb7e21f9e5e9a2f09237978c1",
+      "bytes": 1012693
+    },
+    {
+      "name": "tcn_lstm",
+      "fold": "fold_4",
+      "file": "fold_4/tcn_lstm.pt",
+      "sha256": "0f0a0e2f7667960d84e984fea9ac7f3dd0bef0017e763584ab3ad6648175687d",
+      "bytes": 1161909
+    },
+    {
+      "name": "gnn_tcn",
+      "fold": "fold_5",
+      "file": "fold_5/gnn_tcn.pt",
+      "sha256": "ff13fdfe53fe6b76acd292a8c13d865f4ac1aa2251a3ca72745a6eb817aa87a1",
+      "bytes": 846139
+    },
+    {
+      "name": "gpr",
+      "fold": "fold_5",
+      "file": "fold_5/gpr.joblib",
+      "sha256": "f8695316cbb69d8b4057a2ffa63a387a17a084420de3a5b616a7b5e47730d161",
+      "bytes": 5709401
+    },
+    {
+      "name": "graph_operator",
+      "fold": "fold_5",
+      "file": "fold_5/graph_operator.pt",
+      "sha256": "5de2128d3699d7f62b8f55c9e695e21090092270bc6d4bd11aa2f3976f411daa",
+      "bytes": 1543021
+    },
+    {
+      "name": "graph_transformer",
+      "fold": "fold_5",
+      "file": "fold_5/graph_transformer.pt",
+      "sha256": "50c8950b83e50438f3064e8a18ae96a6efa19a298564795cea205f7f0d8f5e41",
+      "bytes": 1175557
+    },
+    {
+      "name": "meshgraphnet",
+      "fold": "fold_5",
+      "file": "fold_5/meshgraphnet.pt",
+      "sha256": "99256dafff1ad23802ca864ff5c5a62d52094d91219eda0c87439d4f1053e02a",
+      "bytes": 3397265
+    },
+    {
+      "name": "mlp",
+      "fold": "fold_5",
+      "file": "fold_5/mlp.pt",
+      "sha256": "e0f399abd8243203ea00cfb693073c8e6c81d8ea651945c5b3230f560a09878e",
+      "bytes": 364401
+    },
+    {
+      "name": "tcn_lstm",
+      "fold": "fold_5",
+      "file": "fold_5/tcn_lstm.pt",
+      "sha256": "7bfee7fbdf5fd9ea2192ebfa29b77142608fbf684660ebde1f33adcdd9a6ad8e",
+      "bytes": 1010237
+    }
+  ]
+}
