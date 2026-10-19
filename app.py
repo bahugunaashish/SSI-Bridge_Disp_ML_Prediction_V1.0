@@ -1149,11 +1149,11 @@ with tab_about:
         st.markdown(
             "- **Motion amplitude and cumulative intensity (4 per direction):** "
             "PGA, root-mean-square acceleration (RMS), Arias intensity, "
-            "and cumulative absolute velocity (CAV).\\n"
-            "- **Strong-motion duration (2):** D5–95 and D5–75 energy-duration measures.\\n"
+            "and cumulative absolute velocity (CAV).\n"
+            "- **Strong-motion duration (2):** D5–95 and D5–75 energy-duration measures.\n"
             "- **Fourier frequency content (7):** dominant frequency, spectral "
             "centroid, bandwidth, and relative spectral energy in four "
-            "frequency bands (0–1, 1–3, 3–6, and above 6 Hz).\\n"
+            "frequency bands (0–1, 1–3, 3–6, and above 6 Hz).\n"
             "- **Prony-based descriptors (9):** for up to three identified "
             "components, frequency, damping ratio, and relative amplitude."
         )
@@ -1174,8 +1174,8 @@ with tab_about:
         )
         st.markdown(
             "- **Amplitude (3 per direction):** RMS acceleration, peak absolute "
-            "acceleration, and mean absolute acceleration.\\n"
-            "- **Energy (1):** Arias energy for that window.\\n"
+            "acceleration, and mean absolute acceleration.\n"
+            "- **Energy (1):** Arias energy for that window.\n"
             "- **Frequency content (6):** dominant frequency, FFT spectral "
             "centroid, and spectral-energy fractions in four frequency bands "
             "(0–1, 1–3, 3–6, and above 6 Hz)."
