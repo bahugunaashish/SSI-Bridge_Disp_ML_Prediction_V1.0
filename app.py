@@ -182,7 +182,7 @@ def metric_values(actual, predicted):
     return r2, mape, rmse, residual_std, int(nonzero.sum())
 
 
-def plot_comparison(data: pd.DataFrame, direction: str, title: str):
+def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=None):
     """Publication-style actual/predicted scatter plot with external legend."""
     actual_col = f"actual_{direction}_mm"
     pred_col = f"predicted_{direction}_mm"
@@ -268,8 +268,42 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
         hovermode="closest",
     )
     fig.update_xaxes(**axis_style)
-    fig.update_yaxes(**axis_style, scaleanchor="x", scaleratio=1)
+    if axis_ranges is None:
+        # Keep the original equal-scale plot in automatic mode.
+        fig.update_yaxes(**axis_style, scaleanchor="x", scaleratio=1)
+    else:
+        # Custom ranges are independent: Plotly scaleanchor would override one range.
+        fig.update_yaxes(**axis_style, scaleanchor=False)
+        fig.update_xaxes(range=list(axis_ranges[0]), autorange=False)
+        fig.update_yaxes(range=list(axis_ranges[1]), autorange=False)
     return fig, pd.DataFrame(metrics)
+
+
+def comparison_axis_controls(direction: str):
+    """Optional independent x/y axis bounds in millimetres for one plot."""
+    with st.expander(f"{direction} axis range settings", expanded=False):
+        manual = st.checkbox("Set custom axis ranges (mm)", key=f"{direction}_manual_axes")
+        if not manual:
+            st.caption("Automatic range with equal X and Y scales.")
+            return None
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**X axis — actual (mm)**")
+            xmin = st.number_input("Minimum X", value=0.0, step=0.5,
+                                   format="%.4f", key=f"{direction}_xmin")
+            xmax = st.number_input("Maximum X", value=20.0, step=0.5,
+                                   format="%.4f", key=f"{direction}_xmax")
+        with right:
+            st.markdown("**Y axis — predicted (mm)**")
+            ymin = st.number_input("Minimum Y", value=0.0, step=0.5,
+                                   format="%.4f", key=f"{direction}_ymin")
+            ymax = st.number_input("Maximum Y", value=20.0, step=0.5,
+                                   format="%.4f", key=f"{direction}_ymax")
+        if xmin >= xmax or ymin >= ymax:
+            st.error("Axis maximum must be greater than its minimum.")
+            return None
+        st.caption("Custom X and Y limits are independent; this changes only the view, not the metrics.")
+        return ((xmin, xmax), (ymin, ymax))
 
 with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
@@ -317,11 +351,15 @@ with tab_compare:
                     chart_df = pd.concat(series_parts, ignore_index=True)
                     x_tab, y_tab = st.tabs(["Peak |Ux|", "Peak |Uy|"])
                     with x_tab:
-                        fig_x, metrics_x = plot_comparison(chart_df, "Ux", "Peak |Ux|: actual vs. predicted")
+                        x_ranges = comparison_axis_controls("Ux")
+                        fig_x, metrics_x = plot_comparison(
+                            chart_df, "Ux", "Peak |Ux|: actual vs. predicted", axis_ranges=x_ranges)
                         st.plotly_chart(fig_x, use_container_width=True)
                         st.dataframe(metrics_x, hide_index=True)
                     with y_tab:
-                        fig_y, metrics_y = plot_comparison(chart_df, "Uy", "Peak |Uy|: actual vs. predicted")
+                        y_ranges = comparison_axis_controls("Uy")
+                        fig_y, metrics_y = plot_comparison(
+                            chart_df, "Uy", "Peak |Uy|: actual vs. predicted", axis_ranges=y_ranges)
                         st.plotly_chart(fig_y, use_container_width=True)
                         st.dataframe(metrics_y, hide_index=True)
                     st.download_button("Download selected predictions (CSV)",
