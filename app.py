@@ -186,7 +186,7 @@ def metric_values(actual, predicted):
     return r2, mape, rmse, residual_std, int(nonzero.sum())
 
 
-def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=None):
+def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=None, legend_rmse=False):
     """Publication-style actual/predicted scatter plot with external legend."""
     actual_col = f"actual_{direction}_mm"
     pred_col = f"predicted_{direction}_mm"
@@ -219,9 +219,10 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=
         fold_label = str(subset["fold"].iloc[0]) if " / fold_" in label else "mean"
         marker_symbol = model_symbols[model]
         color = model_colors[model]
-        # Compact legend keeps detailed statistics in the table below the figure.
+        # Keep existing legends untouched; optionally show RMSE for overfitting plots.
+        legend_label = f"{label} | RMSE={rmse:.3f} mm" if legend_rmse else label
         fig.add_trace(go.Scattergl(
-            x=actual, y=predicted, mode="markers", name=label,
+            x=actual, y=predicted, mode="markers", name=legend_label,
             customdata=subset.loc[valid, ["simulation_id"]].to_numpy(),
             hovertemplate="Case: %{customdata[0]}<br>Actual: %{x:.4f} mm"
                           "<br>Predicted: %{y:.4f} mm<extra>%{fullData.name}</extra>",
@@ -457,6 +458,40 @@ with tab_compare:
 OVERFITTING_DRIVE_FILE_ID = "1GwaPgm5lVMobPWNKRhKM3TT9w0AiRyMz"
 
 
+
+def overfit_axis_controls(direction):
+    """Independent manual X/Y axis controls for the overfitting tab only."""
+    with st.expander(f"{direction} axis range settings", expanded=False):
+        manual = st.checkbox(
+            "Set custom axis ranges (mm)",
+            key=f"overfit_{direction}_manual_axes")
+        if not manual:
+            st.caption("Automatic range with equal X and Y scales.")
+            return None
+        xcol, ycol = st.columns(2)
+        with xcol:
+            st.markdown("**X axis — actual (mm)**")
+            xmin = st.number_input(
+                "Minimum X", value=0.0, step=0.5, format="%.4f",
+                key=f"overfit_{direction}_xmin")
+            xmax = st.number_input(
+                "Maximum X", value=20.0, step=0.5, format="%.4f",
+                key=f"overfit_{direction}_xmax")
+        with ycol:
+            st.markdown("**Y axis — predicted (mm)**")
+            ymin = st.number_input(
+                "Minimum Y", value=0.0, step=0.5, format="%.4f",
+                key=f"overfit_{direction}_ymin")
+            ymax = st.number_input(
+                "Maximum Y", value=20.0, step=0.5, format="%.4f",
+                key=f"overfit_{direction}_ymax")
+        if xmin >= xmax or ymin >= ymax:
+            st.error("Axis maximum must exceed its minimum.")
+            st.stop()
+        st.caption("Axis limits only change the view; they do not alter performance metrics.")
+        return ((xmin, xmax), (ymin, ymax))
+
+
 def overfit_metrics_table(data, direction, group_columns):
     """Raw, unnormalized performance metrics for each requested group."""
     rows = []
@@ -555,9 +590,13 @@ with tab_overfit:
                             st.markdown(f"### Peak |{direction}| performance")
                             st.caption("Each scatter series represents one model/dataset"
                                        + ("/fold." if fold_detail else "; points across selected folds are pooled."))
+                            st.caption("Legend: RMSE (mm), calculated for each displayed series. "
+                                       "R², MAPE, and Error SD are available in the tables below.")
+                            custom_ranges = overfit_axis_controls(direction)
                             plot, _ = plot_comparison(
                                 scatter_data, direction,
-                                f"Peak |{direction}| — training vs. validation vs. test")
+                                f"Peak |{direction}| — training vs. validation vs. test",
+                                axis_ranges=custom_ranges, legend_rmse=True)
                             st.plotly_chart(plot, use_container_width=True,
                                             key=f"overfit_plot_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
