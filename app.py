@@ -775,16 +775,12 @@ def add_shap_percentages(data):
 
 
 def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=None):
-    """Compare selected cases from multiple models/folds with red hollow diamonds."""
+    """Compare selected simulations using model and fold marker styling."""
     fig = go.Figure()
     subset = data.loc[data["feature"].eq(feature) & data["output"].eq(direction)]
-    shown_selected_folds = set()
     for (model, fold), rows in subset.groupby(["model", "fold"], sort=True):
         fold_number = int(str(fold).replace("fold_", ""))
         fold_size = 7 + 2 * fold_number
-        selected_size = fold_size + 6
-        show_selected_legend = fold not in shown_selected_folds
-        shown_selected_folds.add(fold)
         color = CASE_STUDY_COLORS.get(model, "#333333")
         shape = CASE_STUDY_SYMBOLS.get(model, "circle")
         x = rows[stat].to_numpy(dtype=float)
@@ -802,15 +798,6 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
                     hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
                                   "<br>Input %{x:.5g}<br>Displacement %{y:.5g} mm"
                                   "<extra>%{fullData.name}</extra>"))
-                # Red hollow diamond highlights the selected cases, without covering
-                # the original model-specific symbol underneath.
-                fig.add_trace(go.Scatter(
-                    x=x, y=y, mode="markers", showlegend=show_selected_legend,
-                    name=f"Selected cases / {fold}",
-                    marker={"symbol": "diamond-open", "color": "#E00000",
-                            "size": selected_size, "line": {"color": "#E00000", "width": 2}},
-                    customdata=case_meta,
-                    hovertemplate="Selected %{customdata[0]}<br>%{y:.5g} mm<extra></extra>"))
             ylabel = f"Peak |{direction}| displacement (mm)"
             title = f"Input feature vs actual/predicted |{direction}|"
         else:
@@ -823,13 +810,6 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
                 hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
                               "<br>Input %{x:.5g}<br>Relative SHAP %{y:.3f}%"
                               "<extra>%{fullData.name}</extra>"))
-            fig.add_trace(go.Scatter(
-                x=x, y=y, mode="markers", showlegend=show_selected_legend,
-                    name=f"Selected cases / {fold}",
-                marker={"symbol": "diamond-open", "color": "#E00000",
-                        "size": selected_size, "line": {"color": "#E00000", "width": 2}},
-                customdata=case_meta,
-                hovertemplate="Selected %{customdata[0]}<br>Relative SHAP %{y:.3f}%<extra></extra>"))
             ylabel = f"Relative Shapley contribution to |{direction}| (%)"
             title = f"Input feature vs SHAP contribution — |{direction}|"
     if kind != "displacement":
