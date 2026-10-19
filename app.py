@@ -182,38 +182,90 @@ def metric_values(actual, predicted):
 
 
 def plot_comparison(data: pd.DataFrame, direction: str, title: str):
+    """Publication-style actual/predicted scatter plot with external legend."""
     actual_col = f"actual_{direction}_mm"
     pred_col = f"predicted_{direction}_mm"
     fig = go.Figure()
     metrics = []
     min_val, max_val = float("inf"), float("-inf")
+    palette = ["#1565C0", "#C62828", "#2E7D32", "#7B1FA2",
+               "#E65100", "#00838F", "#5D4037"]
+    symbols = ["circle-open", "triangle-up-open", "square-open",
+               "diamond-open", "cross-open"]
+    model_names = sorted(data["model"].unique().tolist())
+    model_colors = {name: palette[i % len(palette)] for i, name in enumerate(model_names)}
+    legend_count = 0
+
     for label, subset in data.groupby("series", sort=False):
         actual = zero_small_displacements(subset[actual_col].to_numpy(dtype=float))
         predicted = zero_small_displacements(subset[pred_col].to_numpy(dtype=float))
+        valid = np.isfinite(actual) & np.isfinite(predicted)
+        actual, predicted = actual[valid], predicted[valid]
+        if not len(actual):
+            continue
         r2, mape, rmse, mape_cases = metric_values(actual, predicted)
-        metrics.append({"Series": label, "Cases": len(subset), "MAPE valid cases": mape_cases,
+        metrics.append({"Series": label, "Cases": len(actual), "MAPE valid cases": mape_cases,
                         "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse})
-        legend = f"{label} | R²={r2:.3f} | MAPE={mape:.2f}% | RMSE={rmse:.3f} mm"
-        min_val = min(min_val, float(np.nanmin(actual)), float(np.nanmin(predicted)))
-        max_val = max(max_val, float(np.nanmax(actual)), float(np.nanmax(predicted)))
+        model = str(subset["model"].iloc[0])
+        fold_label = str(subset["fold"].iloc[0]) if " / fold_" in label else "mean"
+        fold_index = int(fold_label.rsplit("_", 1)[1]) - 1 if fold_label.startswith("fold_") else 0
+        marker_symbol = "circle-open" if fold_label == "mean" else symbols[fold_index % len(symbols)]
+        color = model_colors[model]
+        # Compact legend keeps detailed statistics in the table below the figure.
         fig.add_trace(go.Scattergl(
-            x=actual, y=predicted, mode="markers", name=legend,
-            customdata=subset[["simulation_id"]].to_numpy(),
-            hovertemplate="Case: %{customdata[0]}<br>Actual: %{x:.4f} mm<br>Predicted: %{y:.4f} mm<extra>%{fullData.name}</extra>",
-            marker={"size": 6, "opacity": 0.57},
+            x=actual, y=predicted, mode="markers", name=label,
+            customdata=subset.loc[valid, ["simulation_id"]].to_numpy(),
+            hovertemplate="Case: %{customdata[0]}<br>Actual: %{x:.4f} mm"
+                          "<br>Predicted: %{y:.4f} mm<extra>%{fullData.name}</extra>",
+            marker={"symbol": marker_symbol, "size": 8 if fold_label == "mean" else 7,
+                    "color": color, "line": {"color": color, "width": 1.2},
+                    "opacity": 0.7},
         ))
-    if np.isfinite(min_val) and np.isfinite(max_val):
-        pad = max((max_val-min_val)*0.04, 0.1)
-        endpoints=[min(0, min_val-pad), max_val+pad]
-        fig.add_trace(go.Scatter(x=endpoints, y=endpoints, mode="lines", name="Ideal (1:1)",
-                                 line={"color": "gray", "dash": "dash", "width": 2}, hoverinfo="skip"))
-    fig.update_layout(title=title, xaxis_title=f"Actual peak |{direction}| (mm)",
-                      yaxis_title=f"Predicted peak |{direction}| (mm)",
-                      legend={"orientation": "h", "y": -0.24, "x": 0},
-                      height=660, margin={"b": 120})
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
-    return fig, pd.DataFrame(metrics)
+        min_val = min(min_val, float(actual.min()), float(predicted.min()))
+        max_val = max(max_val, float(actual.max()), float(predicted.max()))
+        legend_count += 1
 
+    if np.isfinite(min_val) and np.isfinite(max_val):
+        pad = max((max_val - min_val) * 0.04, 0.05)
+        lower = min(0.0, min_val - pad)
+        upper = max_val + pad
+        fig.add_trace(go.Scatter(
+            x=[lower, upper], y=[lower, upper], mode="lines", name="Ideal (1:1)",
+            line={"color": "#505050", "dash": "dash", "width": 1.6},
+            hoverinfo="skip",
+        ))
+        fig.update_xaxes(range=[lower, upper])
+        fig.update_yaxes(range=[lower, upper])
+
+    axis_style = dict(
+        showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
+        showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
+        ticks="outside", ticklen=5, tickcolor="#222222", zeroline=False,
+        tickfont={"family": "Georgia, Times New Roman, serif", "size": 14, "color": "#222222"},
+        title_font={"family": "Georgia, Times New Roman, serif", "size": 17, "color": "#111111"},
+        automargin=True,
+    )
+    fig.update_layout(
+        template="plotly_white",
+        title={"text": title, "x": 0.43, "xanchor": "center",
+               "font": {"family": "Georgia, Times New Roman, serif", "size": 20,
+                        "color": "#111111"}},
+        xaxis_title=f"Actual peak |{direction}| displacement (mm)",
+        yaxis_title=f"Predicted peak |{direction}| displacement (mm)",
+        font={"family": "Georgia, Times New Roman, serif", "size": 14, "color": "#222222"},
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend={"orientation": "v", "x": 1.02, "xanchor": "left",
+                "y": 1, "yanchor": "top",
+                "font": {"family": "Georgia, Times New Roman, serif", "size": 12},
+                "bgcolor": "rgba(255,255,255,0)",
+                "title": {"text": "Model / fold"}},
+        height=max(650, min(1150, 180 + legend_count * 26)),
+        margin={"l": 95, "r": 260, "t": 85, "b": 95},
+        hovermode="closest",
+    )
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style, scaleanchor="x", scaleratio=1)
+    return fig, pd.DataFrame(metrics)
 
 with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
