@@ -763,6 +763,17 @@ def case_plot_style(fig, x_title, y_title, title, axis_ranges=None):
     return fig
 
 
+def add_shap_percentages(data):
+    """Signed percent of total absolute feature contribution, per explained case."""
+    result = data.copy()
+    keys = ["simulation_id", "model", "fold", "output"]
+    denominator = result.groupby(keys)["shapley_value"].transform(
+        lambda values: values.abs().sum(min_count=1))
+    result["shapley_percent"] = np.where(
+        denominator > 0, 100.0 * result["shapley_value"] / denominator, np.nan)
+    return result
+
+
 def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=None):
     """Compare selected cases from multiple models/folds with red hollow diamonds."""
     fig = go.Figure()
@@ -803,14 +814,14 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
             ylabel = f"Peak |{direction}| displacement (mm)"
             title = f"Input feature vs actual/predicted |{direction}|"
         else:
-            y = rows["shapley_value"].to_numpy(dtype=float) * 1000
+            y = rows["shapley_percent"].to_numpy(dtype=float)
             fig.add_trace(go.Scatter(
                 x=x, y=y, mode="markers", name=f"{model} / {fold}",
                 marker={"symbol": shape + "-open", "color": color, "size": fold_size,
                         "line": {"color": color, "width": 1.4}},
                 customdata=case_meta,
                 hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
-                              "<br>Input %{x:.5g}<br>SHAP %{y:.5g} mm"
+                              "<br>Input %{x:.5g}<br>Relative SHAP %{y:.3f}%"
                               "<extra>%{fullData.name}</extra>"))
             fig.add_trace(go.Scatter(
                 x=x, y=y, mode="markers", showlegend=show_selected_legend,
@@ -818,8 +829,8 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
                 marker={"symbol": "diamond-open", "color": "#E00000",
                         "size": selected_size, "line": {"color": "#E00000", "width": 2}},
                 customdata=case_meta,
-                hovertemplate="Selected %{customdata[0]}<br>SHAP %{y:.5g} mm<extra></extra>"))
-            ylabel = f"Shapley contribution to |{direction}| (mm)"
+                hovertemplate="Selected %{customdata[0]}<br>Relative SHAP %{y:.3f}%<extra></extra>"))
+            ylabel = f"Relative Shapley contribution to |{direction}| (%)"
             title = f"Input feature vs SHAP contribution — |{direction}|"
     if kind != "displacement":
         fig.add_hline(y=0, line_dash="dash", line_color="#505050")
@@ -831,10 +842,10 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
 def case_comparison_importance(data, direction):
     """Mean absolute Shapley contributions for selected cases, by model."""
     df = data.loc[data["output"].eq(direction)].copy()
-    df["abs_shap_mm"] = df["shapley_value"].abs() * 1000
-    ranking = df.groupby("feature")["abs_shap_mm"].mean().nlargest(15).index.tolist()
+    df["abs_shap_pct"] = df["shapley_percent"].abs()
+    ranking = df.groupby("feature")["abs_shap_pct"].mean().nlargest(15).index.tolist()
     summary = df.loc[df["feature"].isin(ranking)].groupby(
-        ["model", "feature"])["abs_shap_mm"].mean()
+        ["model", "feature"])["abs_shap_pct"].mean()
     fig = go.Figure()
     for model in sorted(df["model"].unique()):
         values = [float(summary.get((model, feature), 0)) for feature in ranking]
@@ -844,7 +855,7 @@ def case_comparison_importance(data, direction):
     fig.update_layout(barmode="group", height=750)
     fig.update_yaxes(autorange="reversed")
     return case_plot_style(
-        fig, "Mean absolute Shapley contribution (mm)", "Input feature",
+        fig, "Mean absolute relative Shapley contribution (%)", "Input feature",
         f"Top 15 features — selected cases — {direction}")
 
 
@@ -852,7 +863,9 @@ with tab_case_study:
     st.subheader("Case study — SHAP and peak displacement comparisons")
     st.caption("Compare multiple models, folds and simulations together. Only sampled "
                "held-out simulations have saved SHAP values. SHAP values are approximate "
-               "and shown in mm; node, edge and earthquake inputs use channel summaries.")
+               "and normalized to signed percentages of total absolute contribution "
+               "per simulation/model/fold/output. This is NOT a percent of predicted "
+               "displacement; node, edge and earthquake inputs use channel summaries.")
     try:
         shap_creds = st.secrets["google_service_account_json"]
         shap_id = st.secrets["google_drive"].get(
@@ -879,6 +892,7 @@ with tab_case_study:
                     validate="many_to_one")
                 if data.empty:
                     raise ValueError("SHAP and prediction datasets have no matching cases.")
+                data = add_shap_percentages(data)
                 st.session_state["shap_case_loaded"] = True
                 st.caption(f"{data.simulation_id.nunique()} explained simulations match "
                            "the prediction database.")
@@ -936,13 +950,13 @@ with tab_case_study:
                                     key=f"shap_compare_disp_{direction}")
                                 limits = case_axis_controls(
                                     direction, "contribution", input_label,
-                                    "Shapley contribution (mm)")
+                                    "Relative Shapley contribution (%)")
                                 st.plotly_chart(case_comparison_scatter(
                                     chosen_data, feature, direction,
                                     "input_feature_" + stat, "shap", limits),
                                     use_container_width=True,
                                     key=f"shap_compare_phi_{direction}")
-                                st.caption("Feature importance uses mean absolute SHAP "
+                                st.caption("Feature importance uses mean absolute relative SHAP (%) "
                                            "across the selected cases and folds.")
                                 st.plotly_chart(
                                     case_comparison_importance(chosen_data, direction),
