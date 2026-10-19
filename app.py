@@ -155,11 +155,11 @@ def load_comparison_csv(file_id: str, credentials_json: str) -> pd.DataFrame:
     return df
 
 
-ZERO_THRESHOLD_MM = 1.0  # 10^-3 m = 1 mm; CSV and plots use millimetres
+ZERO_THRESHOLD_MM = 1e-3
 
 
 def zero_small_displacements(values):
-    """Treat absolute displacements below 1 mm (0.001 m) as exactly zero."""
+    """Treat absolute displacements below 0.001 mm as exactly zero."""
     values = np.asarray(values, dtype=float).copy()
     values[np.abs(values) < ZERO_THRESHOLD_MM] = 0.0
     return values
@@ -377,7 +377,7 @@ with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
     st.caption("Precomputed Clemson-cluster predictions; changing folds/models does not retrain or rerun inference.")
     st.caption("Error SD (mm) is the sample standard deviation of actual minus predicted displacement errors (n − 1 denominator).")
-    st.caption("For plots and all metrics, values with |displacement| < 1 mm (0.001 m) are set to 0. "
+    st.caption("For plots and all metrics, values with |displacement| < 0.001 mm are set to 0. "
                "MAPE excludes cases where actual displacement is zero; 'MAPE valid cases' shows its denominator. "
                "The downloadable CSV retains original, unmodified values.")
     st.warning("Full-training-dataset comparison: metrics here are descriptive, not independent test-set accuracy. "
