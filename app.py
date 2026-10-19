@@ -54,7 +54,11 @@ def download_drive_database(file_id: str, credentials_json: str) -> str:
     finally:
         response.close()
 
-tab_predict, tab_compare = st.tabs(["Predict a simulation", "Actual vs. predicted — 780 cases"])
+tab_predict, tab_compare, tab_overfit = st.tabs([
+    "Predict a simulation",
+    "Actual vs. predicted — 780 cases",
+    "Overfitting analysis — train / validation / test",
+])
 
 with tab_predict:
     mode = st.radio("Prediction mode", ["5-fold ensemble", "Single fold", "Compare all models"], horizontal=True)
@@ -447,3 +451,164 @@ with tab_compare:
                                        file_name="ssi_selected_predictions.csv", mime="text/csv")
             except Exception as exc:
                 st.error(f"Could not load or plot comparison database: {type(exc).__name__}: {exc}")
+
+# Independent overfitting analysis: uses a separate, split-labeled CSV.
+# The existing prediction and all-data comparison tabs are deliberately unchanged.
+OVERFITTING_DRIVE_FILE_ID = "1GwaPgm5lVMobPWNKRhKM3TT9w0AiRyMz"
+
+
+def overfit_metrics_table(data, direction, group_columns):
+    """Raw, unnormalized performance metrics for each requested group."""
+    rows = []
+    for group_key, group in data.groupby(group_columns, sort=True):
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        a = group[f"actual_{direction}_mm"].to_numpy(dtype=float)
+        p = group[f"predicted_{direction}_mm"].to_numpy(dtype=float)
+        r2, mape, rmse, sd, n_mape = metric_values(a, p)
+        row = dict(zip(group_columns, group_key))
+        row.update({"N": len(group), "MAPE valid cases": n_mape,
+                    "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse,
+                    "Error SD (mm)": sd})
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def overfit_plot_data(data, fold_detail):
+    """Build trace labels without ever averaging across train/validation/test."""
+    result = data.copy()
+    if fold_detail:
+        result["series"] = (result["model"] + " / " + result["fold"] +
+                            " / " + result["split"])
+    else:
+        result["series"] = result["model"] + " / " + result["split"]
+    return result
+
+
+with tab_overfit:
+    st.subheader("Overfitting analysis — training, validation, and held-out test")
+    st.caption("This tab uses the separately labeled cross-validation CSV; the first two tabs "
+               "and their Google Drive files are unchanged.")
+    st.caption("All metrics and plot values use |U| < 0.001 mm → 0 mm for both actual and "
+               "predicted Ux/Uy. MAPE excludes adjusted zero actual values. "
+               "Error SD is sample SD of prediction residuals.")
+    st.warning("Validation data were used for model tuning/early stopping. "
+               "Held-out test data are the more appropriate estimate of generalization. "
+               "When pooling folds, training and validation cases can repeat across folds; "
+               "pooled metrics weight each fold-case prediction, not each unique simulation.")
+    try:
+        overfit_creds = st.secrets["google_service_account_json"]
+        overfit_id = st.secrets["google_drive"].get(
+            "overfitting_file_id", OVERFITTING_DRIVE_FILE_ID)
+    except (KeyError, FileNotFoundError):
+        st.error("Google service-account credentials are missing from Streamlit Secrets.")
+    else:
+        if (st.button("Load training / validation / test data", key="load_overfit")
+                or st.session_state.get("overfit_loaded", False)):
+            try:
+                of = load_comparison_csv(overfit_id, overfit_creds).copy()
+                if "split" not in of.columns:
+                    raise ValueError("Expected a split column in the new CSV.")
+                of["split"] = of["split"].astype(str).str.lower().str.strip()
+                expected_splits = {"train", "validation", "test"}
+                if not set(of["split"].unique()).issubset(expected_splits):
+                    raise ValueError(f"Unexpected split labels: {sorted(of['split'].unique())}")
+                keys = ["simulation_id", "model", "fold"]
+                if of.duplicated(keys).any():
+                    raise ValueError("Duplicate model/fold/simulation rows in CSV.")
+                st.session_state["overfit_loaded"] = True
+                st.success(f"Loaded {len(of):,} predictions from {of.simulation_id.nunique():,} simulations.")
+                breakdown = of.groupby("split", sort=False).size().rename("Predictions").reset_index()
+                st.dataframe(breakdown, hide_index=True)
+                c_models, c_folds = st.columns(2)
+                with c_models:
+                    chosen_models = st.multiselect(
+                        "Models — overfitting tab",
+                        sorted(of["model"].unique()), default=sorted(of["model"].unique()),
+                        key="overfit_models")
+                with c_folds:
+                    chosen_folds = st.multiselect(
+                        "Folds — overfitting tab",
+                        sorted(of["fold"].unique()), default=sorted(of["fold"].unique()),
+                        key="overfit_folds")
+                selected_splits = st.multiselect(
+                    "Datasets to compare",
+                    ["train", "validation", "test"],
+                    default=["train", "validation", "test"],
+                    key="overfit_splits")
+                fold_detail = st.checkbox(
+                    "Show each selected fold separately in scatter plots",
+                    value=False, key="overfit_fold_detail")
+                if not chosen_models or not chosen_folds or not selected_splits:
+                    st.info("Select at least one model, fold, and dataset.")
+                else:
+                    selected = of[
+                        of["model"].isin(chosen_models)
+                        & of["fold"].isin(chosen_folds)
+                        & of["split"].isin(selected_splits)
+                    ].copy()
+                    scatter_data = overfit_plot_data(selected, fold_detail)
+                    ux_view, uy_view = st.tabs(["Training / validation / test — Ux",
+                                                "Training / validation / test — Uy"])
+                    for direction, area in [("Ux", ux_view), ("Uy", uy_view)]:
+                        with area:
+                            st.markdown(f"### Peak |{direction}| performance")
+                            st.caption("Each scatter series represents one model/dataset"
+                                       + ("/fold." if fold_detail else "; points across selected folds are pooled."))
+                            plot, _ = plot_comparison(
+                                scatter_data, direction,
+                                f"Peak |{direction}| — training vs. validation vs. test")
+                            st.plotly_chart(plot, use_container_width=True,
+                                            key=f"overfit_plot_{direction}")
+                            st.markdown("**Metrics per model, fold, and dataset**")
+                            per_fold = overfit_metrics_table(
+                                selected, direction, ["model", "fold", "split"])
+                            st.dataframe(per_fold, hide_index=True)
+                            st.markdown("**Pooled selected-fold metrics by model and dataset**")
+                            pooled = overfit_metrics_table(
+                                selected, direction, ["model", "split"])
+                            st.dataframe(pooled, hide_index=True)
+                            if not pooled.empty:
+                                radar_input = pooled.copy()
+                                radar_input["Series"] = (radar_input["model"] +
+                                                         " / " + radar_input["split"])
+                                st.markdown("**Four-metric spider plot (relative 0–1 scores)**")
+                                st.caption("Normalized within the current selection, with higher "
+                                           "better for all spokes. Actual metric values are in "
+                                           "the tables above.")
+                                st.plotly_chart(
+                                    plot_metrics_radar(radar_input, direction),
+                                    use_container_width=True,
+                                    key=f"overfit_radar_{direction}")
+                            if {"train", "test"}.issubset(set(selected["split"])):
+                                pivot = per_fold.pivot_table(
+                                    index=["model", "fold"], columns="split",
+                                    values=["R²", "RMSE (mm)", "Error SD (mm)"],
+                                    aggfunc="first")
+                                gap = pd.DataFrame(index=pivot.index)
+                                for metric in ["R²", "RMSE (mm)", "Error SD (mm)"]:
+                                    if (metric, "train") in pivot.columns and (metric, "test") in pivot.columns:
+                                        sign = -1 if metric == "R²" else 1
+                                        gap[f"Test − Train {metric}"] = (
+                                            sign * (pivot[(metric, "test")] -
+                                                    pivot[(metric, "train")]))
+                                if not gap.empty:
+                                    st.markdown("**Overfitting gap: held-out test versus training**")
+                                    st.caption("Positive gap: R² decreased, or RMSE/Error SD "
+                                               "increased on test relative to training.")
+                                    st.dataframe(gap.reset_index(), hide_index=True)
+                            st.download_button(
+                                f"Download {direction} per-fold metrics CSV",
+                                per_fold.to_csv(index=False).encode("utf-8"),
+                                file_name=f"ssi_overfit_{direction}_metrics.csv",
+                                mime="text/csv", key=f"overfit_download_{direction}")
+                    st.download_button(
+                        "Download selected split-labeled predictions CSV",
+                        selected.to_csv(index=False).encode("utf-8"),
+                        file_name="ssi_train_validation_test_selected.csv",
+                        mime="text/csv", key="overfit_download_predictions")
+            except Exception as exc:
+                st.error(f"Could not load overfitting analysis data: "
+                         f"{type(exc).__name__}: {exc}")
+                st.caption("If Google Drive returns HTTP 404, verify the new CSV is shared "
+                           "with the same service-account email as the original HDF5 file.")
