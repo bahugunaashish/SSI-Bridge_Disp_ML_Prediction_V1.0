@@ -54,11 +54,12 @@ def download_drive_database(file_id: str, credentials_json: str) -> str:
     finally:
         response.close()
 
-tab_predict, tab_compare, tab_overfit, tab_case_study = st.tabs([
+tab_predict, tab_compare, tab_overfit, tab_case_study, tab_new_prediction = st.tabs([
     "Predict a simulation",
     "Actual vs. predicted — 780 cases",
     "Overfitting analysis — train / validation / test",
     "Case study & SHAP analysis",
+    "New SSI response prediction",
 ])
 
 with tab_predict:
@@ -956,3 +957,85 @@ with tab_case_study:
                 st.error(f"Could not load SHAP comparison: {type(exc).__name__}: {exc}")
                 st.caption("Check that both Drive files are shared with "
                            "the Streamlit service account.")
+
+
+# The new-case workflow will reuse the original feature-only OpenSees generator.
+# This first-stage panel verifies that the required source folders are reachable
+# before enabling any predictions, avoiding fabricated or placeholder results.
+NEW_PREDICTION_DRIVE_FOLDER_ID = "1E_nwCDgsw117Z7cI7w_BKRS8o_VXg4Gk"
+
+
+def drive_list_children(folder_id: str, credentials_json: str) -> list:
+    """List all children of a restricted Google Drive folder via service account."""
+    info = json.loads(credentials_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    )
+    session = AuthorizedSession(credentials)
+    files = []
+    token = None
+    while True:
+        params = {
+            "q": f"'{folder_id}' in parents and trashed = false",
+            "fields": "nextPageToken,files(id,name,mimeType,size)",
+            "pageSize": 1000,
+        }
+        if token:
+            params["pageToken"] = token
+        response = session.get(
+            "https://www.googleapis.com/drive/v3/files",
+            params=params, timeout=60,
+        )
+        response.raise_for_status()
+        body = response.json()
+        files.extend(body.get("files", []))
+        token = body.get("nextPageToken")
+        if not token:
+            break
+    return files
+
+
+with tab_new_prediction:
+    st.subheader("New SSI response prediction")
+    st.write(
+        "Prepare a new simulation-matrix row, generate the OpenSees model in "
+        "feature-only mode, and use saved checkpoints to predict peak |Ux| and |Uy|. "
+        "No dynamic analysis or retraining is required."
+    )
+    st.caption(
+        "Setup stage: verify the required Google Drive source files. "
+        "New-case inference will be enabled after original feature generation "
+        "and HDF5 compatibility are validated."
+    )
+    if st.button("Check prediction input folders", type="primary",
+                 key="new_prediction_check_folders"):
+        try:
+            credentials_json = st.secrets["google_service_account_json"]
+            children = drive_list_children(
+                NEW_PREDICTION_DRIVE_FOLDER_ID, credentials_json
+            )
+            found = {item["name"]: item for item in children}
+            required = ["SSI_Simulation_Matrix1(4).xlsx", "EQs", "soil_profiles"]
+            rows = []
+            for name in required:
+                item = found.get(name)
+                expected_folder = name in ("EQs", "soil_profiles")
+                valid_type = item is not None and (
+                    (item.get("mimeType") == "application/vnd.google-apps.folder")
+                    if expected_folder else
+                    (item.get("mimeType") != "application/vnd.google-apps.folder")
+                )
+                rows.append({"Required input": name,
+                             "Status": "Found" if valid_type else "Missing or wrong type"})
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+            for name in ("EQs", "soil_profiles"):
+                folder = found.get(name)
+                if folder and folder.get("mimeType") == "application/vnd.google-apps.folder":
+                    contents = drive_list_children(folder["id"], credentials_json)
+                    st.write(f"{name}: {len(contents)} immediate entries found")
+            if all(row["Status"] == "Found" for row in rows):
+                st.success("Input matrix and both source folders are accessible.")
+            else:
+                st.warning("Verify filenames, folder structure, and inherited Viewer access.")
+        except Exception as exc:
+            st.error(f"Google Drive access check failed: {type(exc).__name__}: {exc}")
