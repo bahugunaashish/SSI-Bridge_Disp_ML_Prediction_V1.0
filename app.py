@@ -767,7 +767,13 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
     """Compare selected cases from multiple models/folds with red hollow diamonds."""
     fig = go.Figure()
     subset = data.loc[data["feature"].eq(feature) & data["output"].eq(direction)]
+    shown_selected_folds = set()
     for (model, fold), rows in subset.groupby(["model", "fold"], sort=True):
+        fold_number = int(str(fold).replace("fold_", ""))
+        fold_size = 7 + 2 * fold_number
+        selected_size = fold_size + 6
+        show_selected_legend = fold not in shown_selected_folds
+        shown_selected_folds.add(fold)
         color = CASE_STUDY_COLORS.get(model, "#333333")
         shape = CASE_STUDY_SYMBOLS.get(model, "circle")
         x = rows[stat].to_numpy(dtype=float)
@@ -779,7 +785,7 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
                 y = zero_small_displacements(rows[column].to_numpy(dtype=float))
                 fig.add_trace(go.Scatter(
                     x=x, y=y, mode="markers", name=f"{model} / {fold} / {title}",
-                    marker={"symbol": marker, "color": color, "size": 10,
+                    marker={"symbol": marker, "color": color, "size": fold_size,
                             "line": {"color": color, "width": 1.4}},
                     customdata=case_meta,
                     hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
@@ -788,9 +794,10 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
                 # Red hollow diamond highlights the selected cases, without covering
                 # the original model-specific symbol underneath.
                 fig.add_trace(go.Scatter(
-                    x=x, y=y, mode="markers", showlegend=False,
+                    x=x, y=y, mode="markers", showlegend=show_selected_legend,
+                    name=f"Selected cases / {fold}",
                     marker={"symbol": "diamond-open", "color": "#E00000",
-                            "size": 18, "line": {"color": "#E00000", "width": 2}},
+                            "size": selected_size, "line": {"color": "#E00000", "width": 2}},
                     customdata=case_meta,
                     hovertemplate="Selected %{customdata[0]}<br>%{y:.5g} mm<extra></extra>"))
             ylabel = f"Peak |{direction}| displacement (mm)"
@@ -799,28 +806,23 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
             y = rows["shapley_value"].to_numpy(dtype=float) * 1000
             fig.add_trace(go.Scatter(
                 x=x, y=y, mode="markers", name=f"{model} / {fold}",
-                marker={"symbol": shape + "-open", "color": color, "size": 10,
+                marker={"symbol": shape + "-open", "color": color, "size": fold_size,
                         "line": {"color": color, "width": 1.4}},
                 customdata=case_meta,
                 hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
                               "<br>Input %{x:.5g}<br>SHAP %{y:.5g} mm"
                               "<extra>%{fullData.name}</extra>"))
             fig.add_trace(go.Scatter(
-                x=x, y=y, mode="markers", showlegend=False,
+                x=x, y=y, mode="markers", showlegend=show_selected_legend,
+                    name=f"Selected cases / {fold}",
                 marker={"symbol": "diamond-open", "color": "#E00000",
-                        "size": 18, "line": {"color": "#E00000", "width": 2}},
+                        "size": selected_size, "line": {"color": "#E00000", "width": 2}},
                 customdata=case_meta,
                 hovertemplate="Selected %{customdata[0]}<br>SHAP %{y:.5g} mm<extra></extra>"))
             ylabel = f"Shapley contribution to |{direction}| (mm)"
             title = f"Input feature vs SHAP contribution — |{direction}|"
     if kind != "displacement":
         fig.add_hline(y=0, line_dash="dash", line_color="#505050")
-    if len(fig.data):
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="markers",
-            name="Selected cases",
-            marker={"symbol": "diamond-open", "color": "#E00000",
-                    "size": 15, "line": {"color": "#E00000", "width": 2}}))
     return case_plot_style(
         fig, f"{feature} ({stat.replace('input_feature_', '')})",
         ylabel, title, axis_ranges=axis_ranges)
