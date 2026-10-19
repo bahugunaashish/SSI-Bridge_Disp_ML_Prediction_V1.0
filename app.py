@@ -155,20 +155,30 @@ def load_comparison_csv(file_id: str, credentials_json: str) -> pd.DataFrame:
     return df
 
 
+ZERO_THRESHOLD_MM = 1e-3
+
+
+def zero_small_displacements(values):
+    """Treat absolute displacements below 0.001 mm as exactly zero."""
+    values = np.asarray(values, dtype=float).copy()
+    values[np.abs(values) < ZERO_THRESHOLD_MM] = 0.0
+    return values
+
+
 def metric_values(actual, predicted):
-    actual = np.asarray(actual, dtype=float)
-    predicted = np.asarray(predicted, dtype=float)
+    actual = zero_small_displacements(actual)
+    predicted = zero_small_displacements(predicted)
     good = np.isfinite(actual) & np.isfinite(predicted)
     actual, predicted = actual[good], predicted[good]
     if len(actual) == 0:
-        return float("nan"), float("nan"), float("nan")
+        return float("nan"), float("nan"), float("nan"), 0
     residual = actual - predicted
     rmse = float(np.sqrt(np.mean(residual ** 2)))
     ss_total = float(np.sum((actual - np.mean(actual)) ** 2))
     r2 = float(1 - np.sum(residual ** 2) / ss_total) if ss_total > 0 else float("nan")
-    nonzero = np.abs(actual) > 1e-9  # absolute displacements in mm
+    nonzero = actual != 0.0  # MAPE is undefined for zero actual values
     mape = float(100 * np.mean(np.abs(residual[nonzero] / actual[nonzero]))) if nonzero.any() else float("nan")
-    return r2, mape, rmse
+    return r2, mape, rmse, int(nonzero.sum())
 
 
 def plot_comparison(data: pd.DataFrame, direction: str, title: str):
@@ -178,11 +188,11 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
     metrics = []
     min_val, max_val = float("inf"), float("-inf")
     for label, subset in data.groupby("series", sort=False):
-        actual = subset[actual_col].to_numpy(dtype=float)
-        predicted = subset[pred_col].to_numpy(dtype=float)
-        r2, mape, rmse = metric_values(actual, predicted)
-        metrics.append({"Series": label, "Cases": len(subset), "R²": r2,
-                        "MAPE (%)": mape, "RMSE (mm)": rmse})
+        actual = zero_small_displacements(subset[actual_col].to_numpy(dtype=float))
+        predicted = zero_small_displacements(subset[pred_col].to_numpy(dtype=float))
+        r2, mape, rmse, mape_cases = metric_values(actual, predicted)
+        metrics.append({"Series": label, "Cases": len(subset), "MAPE valid cases": mape_cases,
+                        "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse})
         legend = f"{label} | R²={r2:.3f} | MAPE={mape:.2f}% | RMSE={rmse:.3f} mm"
         min_val = min(min_val, float(np.nanmin(actual)), float(np.nanmin(predicted)))
         max_val = max(max_val, float(np.nanmax(actual)), float(np.nanmax(predicted)))
@@ -208,6 +218,9 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
 with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
     st.caption("Precomputed Clemson-cluster predictions; changing folds/models does not retrain or rerun inference.")
+    st.caption("For plots and all metrics, values with |displacement| < 0.001 mm are set to 0. "
+               "MAPE excludes cases where actual displacement is zero; 'MAPE valid cases' shows its denominator. "
+               "The downloadable CSV retains original, unmodified values.")
     st.warning("Full-training-dataset comparison: metrics here are descriptive, not independent test-set accuracy. "
                "Use held-out or out-of-fold cases for unbiased performance evaluation.")
     try:
