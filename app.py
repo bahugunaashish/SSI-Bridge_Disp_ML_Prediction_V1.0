@@ -305,6 +305,74 @@ def comparison_axis_controls(direction: str):
         st.caption("Custom X and Y limits are independent; this changes only the view, not the metrics.")
         return ((xmin, xmax), (ymin, ymax))
 
+
+def plot_metrics_radar(metrics: pd.DataFrame, direction: str):
+    """Compare selected model/fold series using relative 0-1 desirability scores."""
+    columns = ["R²", "MAPE (%)", "RMSE (mm)", "Error SD (mm)"]
+    labels = ["R² ↑", "MAPE ↓", "RMSE ↓", "Std ↓"]
+    # Normalize *per metric* across the currently selected model/fold series.
+    # Higher is better for R²; lower is better for the three error metrics.
+    scores = pd.DataFrame(index=metrics.index)
+    for col in columns:
+        values = pd.to_numeric(metrics[col], errors="coerce").to_numpy(dtype=float)
+        valid = np.isfinite(values)
+        scaled = np.full(len(values), np.nan, dtype=float)
+        if valid.any():
+            lo, hi = float(values[valid].min()), float(values[valid].max())
+            if np.isclose(hi, lo):
+                scaled[valid] = 1.0  # No discrimination when all values tie.
+            elif col == "R²":
+                scaled[valid] = (values[valid] - lo) / (hi - lo)
+            else:
+                scaled[valid] = (hi - values[valid]) / (hi - lo)
+        scores[col] = scaled
+
+    palette = ["#1565C0", "#C62828", "#2E7D32", "#7B1FA2",
+               "#E65100", "#00838F", "#5D4037"]
+    names = ["gnn_tcn", "gpr", "graph_operator", "graph_transformer",
+             "meshgraphnet", "mlp", "tcn_lstm"]
+    shapes = ["circle-open", "square-open", "diamond-open", "triangle-up-open",
+              "triangle-down-open", "cross-open", "x-open"]
+    colors = dict(zip(names, palette))
+    symbols = dict(zip(names, shapes))
+    fig = go.Figure()
+    for i, row in metrics.iterrows():
+        model = str(row["Series"]).split(" / ")[0]
+        values = scores.loc[i, columns].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            continue
+        radial = values.tolist() + [float(values[0])]
+        fig.add_trace(go.Scatterpolar(
+            r=radial,
+            theta=labels + [labels[0]],
+            mode="lines+markers",
+            name=str(row["Series"]),
+            line={"color": colors.get(model, "#555555"), "width": 1.8},
+            marker={"symbol": symbols.get(model, "circle-open"), "size": 8,
+                    "color": colors.get(model, "#555555")},
+            opacity=0.8,
+            hovertemplate="%{theta}<br>Relative score: %{r:.3f}<extra>%{fullData.name}</extra>",
+        ))
+    fig.update_layout(
+        template="plotly_white",
+        title={"text": f"Peak |{direction}| — ML model performance (radar)", "x": 0.42,
+               "font": {"family": "Courier New, Courier, monospace", "size": 19}},
+        font={"family": "Courier New, Courier, monospace", "size": 13},
+        polar={"bgcolor": "white",
+               "radialaxis": {"range": [0, 1], "tickvals": [0, 0.25, 0.5, 0.75, 1],
+                              "gridcolor": "#D0D0D0", "griddash": "dash",
+                              "angle": 45, "tickfont": {"size": 11}},
+               "angularaxis": {"gridcolor": "#D0D0D0",
+                               "tickfont": {"size": 13}}},
+        legend={"x": 1.03, "y": 1, "xanchor": "left", "yanchor": "top",
+                "title": {"text": "Model / fold"}, "font": {"size": 11}},
+        margin={"l": 65, "r": 255, "t": 90, "b": 65},
+        height=680,
+        paper_bgcolor="white",
+    )
+    return fig
+
+
 with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
     st.caption("Precomputed Clemson-cluster predictions; changing folds/models does not retrain or rerun inference.")
@@ -356,12 +424,24 @@ with tab_compare:
                             chart_df, "Ux", "Peak |Ux|: actual vs. predicted", axis_ranges=x_ranges)
                         st.plotly_chart(fig_x, use_container_width=True)
                         st.dataframe(metrics_x, hide_index=True)
+                        st.subheader("Model performance spider plot — Ux")
+                        st.caption("Relative scores (0–1) within the displayed model/fold selection; "
+                                   "higher is better on every spoke. R² is maximized; MAPE, RMSE, "
+                                   "and error SD are minimized. Tied metrics score 1 for all series. "
+                                   "Use the table above for actual values and units.")
+                        st.plotly_chart(plot_metrics_radar(metrics_x, "Ux"), use_container_width=True)
                     with y_tab:
                         y_ranges = comparison_axis_controls("Uy")
                         fig_y, metrics_y = plot_comparison(
                             chart_df, "Uy", "Peak |Uy|: actual vs. predicted", axis_ranges=y_ranges)
                         st.plotly_chart(fig_y, use_container_width=True)
                         st.dataframe(metrics_y, hide_index=True)
+                        st.subheader("Model performance spider plot — Uy")
+                        st.caption("Relative scores (0–1) within the displayed model/fold selection; "
+                                   "higher is better on every spoke. R² is maximized; MAPE, RMSE, "
+                                   "and error SD are minimized. Tied metrics score 1 for all series. "
+                                   "Use the table above for actual values and units.")
+                        st.plotly_chart(plot_metrics_radar(metrics_y, "Uy"), use_container_width=True)
                     st.download_button("Download selected predictions (CSV)",
                                        chart_df.to_csv(index=False).encode("utf-8"),
                                        file_name="ssi_selected_predictions.csv", mime="text/csv")
