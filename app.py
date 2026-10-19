@@ -1,5 +1,9 @@
 """SSI saved-checkpoint inference with Google Drive HDF5 and upload alternatives."""
 import json
+import io
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 import tempfile
 from pathlib import Path
 
@@ -50,76 +54,208 @@ def download_drive_database(file_id: str, credentials_json: str) -> str:
     finally:
         response.close()
 
-mode = st.radio("Prediction mode", ["5-fold ensemble", "Single fold", "Compare all models"], horizontal=True)
-model = None
-fold = None
-if mode != "Compare all models":
-    model = st.selectbox("Model", sorted(models))
-    if mode == "Single fold":
-        fold = st.selectbox("Fold", [e["fold"] for e in models[model]])
+tab_predict, tab_compare = st.tabs(["Predict a simulation", "Actual vs. predicted — 780 cases"])
 
-source = st.radio("Input source", ["Google Drive database", "Upload HDF5 file"], horizontal=True)
-st.info("Use only trusted checkpoint files. Your saved models remain on the server.")
+with tab_predict:
+    mode = st.radio("Prediction mode", ["5-fold ensemble", "Single fold", "Compare all models"], horizontal=True)
+    model = None
+    fold = None
+    if mode != "Compare all models":
+        model = st.selectbox("Model", sorted(models))
+        if mode == "Single fold":
+            fold = st.selectbox("Fold", [e["fold"] for e in models[model]])
 
-# Uploaded files are stored in a session-local temp directory to survive widget reruns.
-path = None
-if source == "Google Drive database":
-    try:
-        file_id = st.secrets["google_drive"]["file_id"]
-        credentials_json = st.secrets["google_service_account_json"]
-    except (KeyError, FileNotFoundError):
-        st.error("Missing Google Drive credentials in Streamlit Secrets. Switch to Upload HDF5 file, or configure Secrets.")
-        st.stop()
-    if st.button("Connect to Google Drive", type="secondary") or st.session_state.get("drive_connected", False):
+    source = st.radio("Input source", ["Google Drive database", "Upload HDF5 file"], horizontal=True)
+    st.info("Use only trusted checkpoint files. Your saved models remain on the server.")
+
+    # Uploaded files are stored in a session-local temp directory to survive widget reruns.
+    path = None
+    if source == "Google Drive database":
         try:
-            path = Path(download_drive_database(file_id, credentials_json))
-            st.session_state["drive_connected"] = True
-            st.success("Google Drive database connected.")
-        except Exception as exc:
-            st.error(f"Google Drive download failed: {type(exc).__name__}: {exc}")
+            file_id = st.secrets["google_drive"]["file_id"]
+            credentials_json = st.secrets["google_service_account_json"]
+        except (KeyError, FileNotFoundError):
+            st.error("Missing Google Drive credentials in Streamlit Secrets. Switch to Upload HDF5 file, or configure Secrets.")
             st.stop()
-else:
-    upload = st.file_uploader("Input-only graph HDF5 (.h5 / .hdf5)", type=["h5", "hdf5"])
-    if upload is not None:
-        upload_signature = (upload.name, upload.size)
-        if st.session_state.get("upload_signature") != upload_signature:
-            path = Path(tempfile.mkdtemp(prefix="ssi_uploaded_hdf5_")) / "input.h5"
-            with path.open("wb") as out:
-                while True:
-                    chunk = upload.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-            st.session_state["upload_path"] = str(path)
-            st.session_state["upload_signature"] = upload_signature
-        path = Path(st.session_state["upload_path"])
+        if st.button("Connect to Google Drive", type="secondary") or st.session_state.get("drive_connected", False):
+            try:
+                path = Path(download_drive_database(file_id, credentials_json))
+                st.session_state["drive_connected"] = True
+                st.success("Google Drive database connected.")
+            except Exception as exc:
+                st.error(f"Google Drive download failed: {type(exc).__name__}: {exc}")
+                st.stop()
+    else:
+        upload = st.file_uploader("Input-only graph HDF5 (.h5 / .hdf5)", type=["h5", "hdf5"])
+        if upload is not None:
+            upload_signature = (upload.name, upload.size)
+            if st.session_state.get("upload_signature") != upload_signature:
+                path = Path(tempfile.mkdtemp(prefix="ssi_uploaded_hdf5_")) / "input.h5"
+                with path.open("wb") as out:
+                    while True:
+                        chunk = upload.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                st.session_state["upload_path"] = str(path)
+                st.session_state["upload_signature"] = upload_signature
+            path = Path(st.session_state["upload_path"])
 
-if path is not None:
+    if path is not None:
+        try:
+            with h5py.File(path, "r") as f:
+                cases = sorted(k for k in f.keys() if isinstance(f[k], h5py.Group) and "inputs" in f[k] and "geometry" in f[k])
+            if not cases:
+                st.error("No compatible simulation groups containing inputs and geometry were found.")
+                st.stop()
+            st.caption(f"Found {len(cases)} compatible simulations.")
+            cid = st.selectbox("Case ID", cases)
+            if st.button("Predict", type="primary"):
+                names = sorted(models) if mode == "Compare all models" else [model]
+                results = {}
+                with st.spinner("Loading saved checkpoints and predicting..."):
+                    for name in names:
+                        results[name] = predict_folds(path, cid, root, name, fold=fold if mode == "Single fold" else None)
+                for name, result in results.items():
+                    st.subheader(name.replace("_", " ").upper())
+                    ux, uy = result["mean_m"]
+                    a, b = st.columns(2)
+                    a.metric("Peak |Ux| (mm)", f"{1000*ux:.4f}")
+                    b.metric("Peak |Uy| (mm)", f"{1000*uy:.4f}")
+                    st.write("Across-fold SD (mm):", [round(x*1000, 6) for x in result["fold_std_m"]])
+                    st.dataframe([{"fold": f, "Ux (mm)": 1000*v[0], "Uy (mm)": 1000*v[1]} for f, v in zip(result["folds"], result["predictions_m"])], hide_index=True)
+                st.download_button("Download results JSON", json.dumps({"case_id": cid, "results": results}, indent=2), file_name=f"{cid}_predictions.json", mime="application/json")
+        except Exception as exc:
+            st.error(f"Prediction failed: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Connect to Google Drive or upload a compatible input-only graph HDF5 file to begin.")
+    st.caption("Fold disagreement is not a calibrated confidence interval. GPR per-fold predictive standard deviations are included in downloaded JSON.")
+
+
+@st.cache_data(show_spinner="Downloading comparison CSV from Google Drive…", ttl=3600)
+def load_comparison_csv(file_id: str, credentials_json: str) -> pd.DataFrame:
+    info = json.loads(credentials_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    )
+    session = AuthorizedSession(credentials)
+    response = session.get(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}",
+        params={"alt": "media"}, timeout=120,
+    )
+    response.raise_for_status()
+    df = pd.read_csv(io.BytesIO(response.content))
+    required = {"simulation_id", "model", "fold", "actual_Ux_mm", "actual_Uy_mm",
+                "predicted_Ux_mm", "predicted_Uy_mm"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Comparison CSV is missing columns: {sorted(missing)}")
+    for col in required - {"simulation_id", "model", "fold"}:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def metric_values(actual, predicted):
+    actual = np.asarray(actual, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    good = np.isfinite(actual) & np.isfinite(predicted)
+    actual, predicted = actual[good], predicted[good]
+    if len(actual) == 0:
+        return float("nan"), float("nan"), float("nan")
+    residual = actual - predicted
+    rmse = float(np.sqrt(np.mean(residual ** 2)))
+    ss_total = float(np.sum((actual - np.mean(actual)) ** 2))
+    r2 = float(1 - np.sum(residual ** 2) / ss_total) if ss_total > 0 else float("nan")
+    nonzero = np.abs(actual) > 1e-9  # absolute displacements in mm
+    mape = float(100 * np.mean(np.abs(residual[nonzero] / actual[nonzero]))) if nonzero.any() else float("nan")
+    return r2, mape, rmse
+
+
+def plot_comparison(data: pd.DataFrame, direction: str, title: str):
+    actual_col = f"actual_{direction}_mm"
+    pred_col = f"predicted_{direction}_mm"
+    fig = go.Figure()
+    metrics = []
+    min_val, max_val = float("inf"), float("-inf")
+    for label, subset in data.groupby("series", sort=False):
+        actual = subset[actual_col].to_numpy(dtype=float)
+        predicted = subset[pred_col].to_numpy(dtype=float)
+        r2, mape, rmse = metric_values(actual, predicted)
+        metrics.append({"Series": label, "Cases": len(subset), "R²": r2,
+                        "MAPE (%)": mape, "RMSE (mm)": rmse})
+        legend = f"{label} | R²={r2:.3f} | MAPE={mape:.2f}% | RMSE={rmse:.3f} mm"
+        min_val = min(min_val, float(np.nanmin(actual)), float(np.nanmin(predicted)))
+        max_val = max(max_val, float(np.nanmax(actual)), float(np.nanmax(predicted)))
+        fig.add_trace(go.Scattergl(
+            x=actual, y=predicted, mode="markers", name=legend,
+            customdata=subset[["simulation_id"]].to_numpy(),
+            hovertemplate="Case: %{customdata[0]}<br>Actual: %{x:.4f} mm<br>Predicted: %{y:.4f} mm<extra>%{fullData.name}</extra>",
+            marker={"size": 6, "opacity": 0.57},
+        ))
+    if np.isfinite(min_val) and np.isfinite(max_val):
+        pad = max((max_val-min_val)*0.04, 0.1)
+        endpoints=[min(0, min_val-pad), max_val+pad]
+        fig.add_trace(go.Scatter(x=endpoints, y=endpoints, mode="lines", name="Ideal (1:1)",
+                                 line={"color": "gray", "dash": "dash", "width": 2}, hoverinfo="skip"))
+    fig.update_layout(title=title, xaxis_title=f"Actual peak |{direction}| (mm)",
+                      yaxis_title=f"Predicted peak |{direction}| (mm)",
+                      legend={"orientation": "h", "y": -0.24, "x": 0},
+                      height=660, margin={"b": 120})
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    return fig, pd.DataFrame(metrics)
+
+
+with tab_compare:
+    st.subheader("Actual vs. predicted peak displacements")
+    st.caption("Precomputed Clemson-cluster predictions; changing folds/models does not retrain or rerun inference.")
+    st.warning("Full-training-dataset comparison: metrics here are descriptive, not independent test-set accuracy. "
+               "Use held-out or out-of-fold cases for unbiased performance evaluation.")
     try:
-        with h5py.File(path, "r") as f:
-            cases = sorted(k for k in f.keys() if isinstance(f[k], h5py.Group) and "inputs" in f[k] and "geometry" in f[k])
-        if not cases:
-            st.error("No compatible simulation groups containing inputs and geometry were found.")
-            st.stop()
-        st.caption(f"Found {len(cases)} compatible simulations.")
-        cid = st.selectbox("Case ID", cases)
-        if st.button("Predict", type="primary"):
-            names = sorted(models) if mode == "Compare all models" else [model]
-            results = {}
-            with st.spinner("Loading saved checkpoints and predicting..."):
-                for name in names:
-                    results[name] = predict_folds(path, cid, root, name, fold=fold if mode == "Single fold" else None)
-            for name, result in results.items():
-                st.subheader(name.replace("_", " ").upper())
-                ux, uy = result["mean_m"]
-                a, b = st.columns(2)
-                a.metric("Peak |Ux| (mm)", f"{1000*ux:.4f}")
-                b.metric("Peak |Uy| (mm)", f"{1000*uy:.4f}")
-                st.write("Across-fold SD (mm):", [round(x*1000, 6) for x in result["fold_std_m"]])
-                st.dataframe([{"fold": f, "Ux (mm)": 1000*v[0], "Uy (mm)": 1000*v[1]} for f, v in zip(result["folds"], result["predictions_m"])], hide_index=True)
-            st.download_button("Download results JSON", json.dumps({"case_id": cid, "results": results}, indent=2), file_name=f"{cid}_predictions.json", mime="application/json")
-    except Exception as exc:
-        st.error(f"Prediction failed: {type(exc).__name__}: {exc}")
-else:
-    st.info("Connect to Google Drive or upload a compatible input-only graph HDF5 file to begin.")
-st.caption("Fold disagreement is not a calibrated confidence interval. GPR per-fold predictive standard deviations are included in downloaded JSON.")
+        comparison_file_id = st.secrets["google_drive"]["comparison_file_id"]
+        comparison_creds = st.secrets["google_service_account_json"]
+    except (KeyError, FileNotFoundError):
+        st.error("Missing google_drive.comparison_file_id or service-account credentials in Streamlit Secrets.")
+    else:
+        if st.button("Load comparison database", key="load_comparison") or st.session_state.get("comparison_loaded", False):
+            try:
+                df = load_comparison_csv(comparison_file_id, comparison_creds)
+                st.session_state["comparison_loaded"] = True
+                st.caption(f"Loaded {len(df):,} model-fold predictions across {df.simulation_id.nunique():,} simulations.")
+                model_options = sorted(df["model"].unique().tolist())
+                selected_models = st.multiselect("Models", model_options, default=model_options)
+                fold_options = sorted(df["fold"].unique().tolist())
+                selected_folds = st.multiselect("Folds (select any combination)", fold_options, default=fold_options)
+                display_mode = st.radio("Fold display", ["Mean of selected folds", "Each selected fold", "Both"], horizontal=True)
+                if not selected_models or not selected_folds:
+                    st.info("Select at least one model and one fold to view plots.")
+                else:
+                    filtered = df[df["model"].isin(selected_models) & df["fold"].isin(selected_folds)].copy()
+                    series_parts = []
+                    if display_mode in ("Each selected fold", "Both"):
+                        indiv = filtered.copy()
+                        indiv["series"] = indiv["model"] + " / " + indiv["fold"]
+                        series_parts.append(indiv)
+                    if display_mode in ("Mean of selected folds", "Both"):
+                        averaged = filtered.groupby(["simulation_id", "model"], as_index=False).agg(
+                            actual_Ux_mm=("actual_Ux_mm", "first"),
+                            actual_Uy_mm=("actual_Uy_mm", "first"),
+                            predicted_Ux_mm=("predicted_Ux_mm", "mean"),
+                            predicted_Uy_mm=("predicted_Uy_mm", "mean"),
+                        )
+                        averaged["series"] = averaged["model"] + " / mean"
+                        series_parts.append(averaged)
+                    chart_df = pd.concat(series_parts, ignore_index=True)
+                    x_tab, y_tab = st.tabs(["Peak |Ux|", "Peak |Uy|"])
+                    with x_tab:
+                        fig_x, metrics_x = plot_comparison(chart_df, "Ux", "Peak |Ux|: actual vs. predicted")
+                        st.plotly_chart(fig_x, use_container_width=True)
+                        st.dataframe(metrics_x, hide_index=True)
+                    with y_tab:
+                        fig_y, metrics_y = plot_comparison(chart_df, "Uy", "Peak |Uy|: actual vs. predicted")
+                        st.plotly_chart(fig_y, use_container_width=True)
+                        st.dataframe(metrics_y, hide_index=True)
+                    st.download_button("Download selected predictions (CSV)",
+                                       chart_df.to_csv(index=False).encode("utf-8"),
+                                       file_name="ssi_selected_predictions.csv", mime="text/csv")
+            except Exception as exc:
+                st.error(f"Could not load or plot comparison database: {type(exc).__name__}: {exc}")
