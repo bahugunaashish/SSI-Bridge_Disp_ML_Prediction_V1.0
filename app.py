@@ -997,6 +997,41 @@ def drive_list_children(folder_id: str, credentials_json: str) -> list:
 
 with tab_new_prediction:
     st.subheader("New SSI response prediction")
+    st.markdown("#### ML model input features")
+    st.caption(
+        "Counts are based on the deployed training/inference feature definitions. "
+        "Feature channels are not the same as user-entered parameters; node and edge "
+        "values are generated from the OpenSees model."
+    )
+    f1, f2, f3 = st.columns(3)
+    f1.metric("Engineering/global parameters", "19")
+    f2.metric("Graph feature channels", "15")
+    f3.metric("Earthquake feature channels", "67")
+    st.dataframe(pd.DataFrame([
+        {"Input category": "Structural geometry and layout",
+         "Number": 7, "Includes": "Lengths, diameters, spans and pile geometry"},
+        {"Input category": "Concrete and steel properties",
+         "Number": 3, "Includes": "Reinforcement and material strengths"},
+        {"Input category": "Soil properties and layering",
+         "Number": 5, "Includes": "Soil-layer count and weighted soil properties"},
+        {"Input category": "Ground-motion setup",
+         "Number": 4, "Includes": "Target PGA, incidence direction and time step"},
+        {"Input category": "Structural graph: nodes",
+         "Number": 6, "Includes": "Coordinates and node/topology indicators"},
+        {"Input category": "Structural graph: edges",
+         "Number": 9, "Includes": "Element length, connectivity and element type"},
+        {"Input category": "Earthquake: whole-record descriptors",
+         "Number": 47, "Includes": "PGA, RMS, Arias, FFT, Prony frequency/damping and duration"},
+        {"Input category": "Earthquake: window descriptor channels",
+         "Number": 20, "Includes": "Amplitude, energy and frequency measures per time window"},
+    ]), hide_index=True, use_container_width=True)
+    st.info(
+        "**Neural ML models:** 101 feature channels overall, with earthquake "
+        "window channels evaluated across 24 ordered windows (480 values). "
+        "**GPR:** 606 flattened input values, including node/edge statistics "
+        "and all earthquake windows. These are two representations of the "
+        "same underlying engineering inputs, not 606 manual inputs."
+    )
     st.write(
         "Prepare a new simulation-matrix row, generate the OpenSees model in "
         "feature-only mode, and use saved checkpoints to predict peak |Ux| and |Uy|. "
