@@ -818,7 +818,7 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
     if len(fig.data):
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers",
-            name="Selected cases (red hollow diamond)",
+            name="Selected cases",
             marker={"symbol": "diamond-open", "color": "#E00000",
                     "size": 15, "line": {"color": "#E00000", "width": 2}}))
     return case_plot_style(
@@ -912,8 +912,7 @@ with tab_case_study:
                     if chosen_data.empty:
                         st.info("Select at least one simulation.")
                     else:
-                        st.caption("Selected cases use red unfilled diamonds. "
-                                   "Model colors and marker shapes are consistent; "
+                        st.caption("Model colors and marker shapes are consistent; "
                                    "open model marker = actual, filled = predicted.")
                         overview = chosen_data[
                             columns].drop_duplicates().copy()
