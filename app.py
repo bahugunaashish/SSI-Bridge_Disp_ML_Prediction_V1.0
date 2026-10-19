@@ -171,14 +171,15 @@ def metric_values(actual, predicted):
     good = np.isfinite(actual) & np.isfinite(predicted)
     actual, predicted = actual[good], predicted[good]
     if len(actual) == 0:
-        return float("nan"), float("nan"), float("nan"), 0
+        return float("nan"), float("nan"), float("nan"), float("nan"), 0
     residual = actual - predicted
     rmse = float(np.sqrt(np.mean(residual ** 2)))
+    residual_std = float(np.std(residual, ddof=1)) if len(residual) > 1 else float("nan")
     ss_total = float(np.sum((actual - np.mean(actual)) ** 2))
     r2 = float(1 - np.sum(residual ** 2) / ss_total) if ss_total > 0 else float("nan")
     nonzero = actual != 0.0  # MAPE is undefined for zero actual values
     mape = float(100 * np.mean(np.abs(residual[nonzero] / actual[nonzero]))) if nonzero.any() else float("nan")
-    return r2, mape, rmse, int(nonzero.sum())
+    return r2, mape, rmse, residual_std, int(nonzero.sum())
 
 
 def plot_comparison(data: pd.DataFrame, direction: str, title: str):
@@ -206,9 +207,10 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
         actual, predicted = actual[valid], predicted[valid]
         if not len(actual):
             continue
-        r2, mape, rmse, mape_cases = metric_values(actual, predicted)
+        r2, mape, rmse, residual_std, mape_cases = metric_values(actual, predicted)
         metrics.append({"Series": label, "Cases": len(actual), "MAPE valid cases": mape_cases,
-                        "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse})
+                        "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse,
+                        "Error SD (mm)": residual_std})
         model = str(subset["model"].iloc[0])
         fold_label = str(subset["fold"].iloc[0]) if " / fold_" in label else "mean"
         marker_symbol = model_symbols[model]
@@ -243,22 +245,22 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
         showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
         showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
         ticks="outside", ticklen=5, tickcolor="#222222", zeroline=False,
-        tickfont={"family": "Georgia, Times New Roman, serif", "size": 14, "color": "#222222"},
-        title_font={"family": "Georgia, Times New Roman, serif", "size": 17, "color": "#111111"},
+        tickfont={"family": "Courier New, Courier, monospace", "size": 14, "color": "#222222"},
+        title_font={"family": "Courier New, Courier, monospace", "size": 17, "color": "#111111"},
         automargin=True,
     )
     fig.update_layout(
         template="plotly_white",
         title={"text": title, "x": 0.43, "xanchor": "center",
-               "font": {"family": "Georgia, Times New Roman, serif", "size": 20,
+               "font": {"family": "Courier New, Courier, monospace", "size": 20,
                         "color": "#111111"}},
         xaxis_title=f"Actual peak |{direction}| displacement (mm)",
         yaxis_title=f"Predicted peak |{direction}| displacement (mm)",
-        font={"family": "Georgia, Times New Roman, serif", "size": 14, "color": "#222222"},
+        font={"family": "Courier New, Courier, monospace", "size": 14, "color": "#222222"},
         plot_bgcolor="white", paper_bgcolor="white",
         legend={"orientation": "v", "x": 1.02, "xanchor": "left",
                 "y": 1, "yanchor": "top",
-                "font": {"family": "Georgia, Times New Roman, serif", "size": 12},
+                "font": {"family": "Courier New, Courier, monospace", "size": 12},
                 "bgcolor": "rgba(255,255,255,0)",
                 "title": {"text": "Model / fold"}},
         height=max(650, min(1150, 180 + legend_count * 26)),
@@ -272,6 +274,7 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
 with tab_compare:
     st.subheader("Actual vs. predicted peak displacements")
     st.caption("Precomputed Clemson-cluster predictions; changing folds/models does not retrain or rerun inference.")
+    st.caption("Error SD (mm) is the sample standard deviation of actual minus predicted displacement errors (n − 1 denominator).")
     st.caption("For plots and all metrics, values with |displacement| < 0.001 mm are set to 0. "
                "MAPE excludes cases where actual displacement is zero; 'MAPE valid cases' shows its denominator. "
                "The downloadable CSV retains original, unmodified values.")
