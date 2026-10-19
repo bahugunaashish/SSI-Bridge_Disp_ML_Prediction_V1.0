@@ -190,10 +190,13 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
     min_val, max_val = float("inf"), float("-inf")
     palette = ["#1565C0", "#C62828", "#2E7D32", "#7B1FA2",
                "#E65100", "#00838F", "#5D4037"]
-    symbols = ["circle-open", "triangle-up-open", "square-open",
-               "diamond-open", "cross-open"]
-    model_names = sorted(data["model"].unique().tolist())
-    model_colors = {name: palette[i % len(palette)] for i, name in enumerate(model_names)}
+    # Each ML model retains its own marker regardless of the selected folds.
+    model_names = ["gnn_tcn", "gpr", "graph_operator", "graph_transformer",
+                   "meshgraphnet", "mlp", "tcn_lstm"]
+    symbols = ["circle-open", "square-open", "diamond-open", "triangle-up-open",
+               "triangle-down-open", "cross-open", "x-open"]
+    model_colors = {name: palette[i] for i, name in enumerate(model_names)}
+    model_symbols = {name: symbols[i] for i, name in enumerate(model_names)}
     legend_count = 0
 
     for label, subset in data.groupby("series", sort=False):
@@ -208,8 +211,7 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str):
                         "R²": r2, "MAPE (%)": mape, "RMSE (mm)": rmse})
         model = str(subset["model"].iloc[0])
         fold_label = str(subset["fold"].iloc[0]) if " / fold_" in label else "mean"
-        fold_index = int(fold_label.rsplit("_", 1)[1]) - 1 if fold_label.startswith("fold_") else 0
-        marker_symbol = "circle-open" if fold_label == "mean" else symbols[fold_index % len(symbols)]
+        marker_symbol = model_symbols[model]
         color = model_colors[model]
         # Compact legend keeps detailed statistics in the table below the figure.
         fig.add_trace(go.Scattergl(
