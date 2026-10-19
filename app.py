@@ -786,8 +786,12 @@ def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=No
         x = rows[stat].to_numpy(dtype=float)
         case_meta = rows[["simulation_id", "split"]].astype(str).to_numpy()
         if kind == "displacement":
-            traces = [("Actual", f"actual_{direction}_mm", shape + "-open"),
-                      ("Predicted", f"predicted_{direction}_mm", shape)]
+            # Fold shapes are distinct; model identity is retained by color.
+            fold_shapes = {1: "circle", 2: "square", 3: "diamond",
+                           4: "triangle-up", 5: "triangle-down"}
+            fold_shape = fold_shapes.get(fold_number, "circle")
+            traces = [("Actual", f"actual_{direction}_mm", fold_shape + "-open"),
+                      ("Predicted", f"predicted_{direction}_mm", fold_shape)]
             for title, column, marker in traces:
                 y = zero_small_displacements(rows[column].to_numpy(dtype=float))
                 fig.add_trace(go.Scatter(
@@ -908,8 +912,9 @@ with tab_case_study:
                     if chosen_data.empty:
                         st.info("Select at least one simulation.")
                     else:
-                        st.caption("Model colors and marker shapes are consistent; "
-                                   "open model marker = actual, filled = predicted.")
+                        st.caption("In displacement plots, colors identify models and shapes "
+                                   "identify folds; open markers = actual, filled = predicted. "
+                                   "SHAP plots retain their existing marker scheme.")
                         overview = chosen_data[
                             columns].drop_duplicates().copy()
                         for col in ("actual_Ux_mm", "predicted_Ux_mm",
