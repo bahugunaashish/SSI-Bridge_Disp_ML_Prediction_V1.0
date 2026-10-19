@@ -696,25 +696,74 @@ def load_shap_samples(file_id, credentials_json):
     return frame
 
 
-def case_plot_style(fig, x_title, y_title, title):
+CASE_STUDY_SYMBOLS = {
+    "gnn_tcn": "circle", "gpr": "square",
+    "graph_operator": "diamond", "graph_transformer": "triangle-up",
+    "meshgraphnet": "triangle-down", "mlp": "cross", "tcn_lstm": "x",
+}
+
+
+def case_axis_controls(direction, kind, x_label, y_label):
+    """Independent X/Y manual limits, scoped to each case-study plot."""
+    scope = f"shap_{direction}_{kind}"
+    with st.expander(f"{direction} — {kind} axis range settings", expanded=False):
+        manual = st.checkbox("Set custom X and Y axis ranges",
+                             key=f"{scope}_manual")
+        if not manual:
+            st.caption("Automatically determined axis limits.")
+            return None
+        xc, yc = st.columns(2)
+        with xc:
+            st.markdown(f"**X axis — {x_label}**")
+            xmin = st.number_input("Minimum X", value=0.0, step=0.5,
+                                   format="%.5f", key=f"{scope}_xmin")
+            xmax = st.number_input("Maximum X", value=20.0, step=0.5,
+                                   format="%.5f", key=f"{scope}_xmax")
+        with yc:
+            st.markdown(f"**Y axis — {y_label}**")
+            ymin = st.number_input("Minimum Y", value=0.0, step=0.5,
+                                   format="%.5f", key=f"{scope}_ymin")
+            ymax = st.number_input("Maximum Y", value=20.0, step=0.5,
+                                   format="%.5f", key=f"{scope}_ymax")
+        if xmin >= xmax or ymin >= ymax:
+            st.error("The axis maximum must be greater than the minimum.")
+            return None
+        st.caption("Manual limits change only the plot view, not calculations.")
+        return ((xmin, xmax), (ymin, ymax))
+
+
+def case_plot_style(fig, x_title, y_title, title, axis_ranges=None):
+    """Reuse comparison-tab publication styling, with optional custom limits."""
+    axis_style = dict(
+        showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
+        showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
+        ticks="outside", ticklen=5, tickcolor="#222222", zeroline=False,
+        tickfont={"family": CASE_STUDY_FONT, "size": 14, "color": "#000000"},
+        title_font={"family": CASE_STUDY_FONT, "size": 17, "color": "#000000"},
+        automargin=True,
+    )
     fig.update_layout(
-        template="plotly_white", height=510, paper_bgcolor="white",
+        template="plotly_white", height=650, paper_bgcolor="white",
         plot_bgcolor="white",
-        title={"text": title, "font": {"color": "#000000", "size": 18}},
-        font={"family": CASE_STUDY_FONT, "color": "#000000", "size": 13},
+        title={"text": title, "x": 0.43, "xanchor": "center",
+               "font": {"family": CASE_STUDY_FONT, "color": "#000000", "size": 20}},
+        font={"family": CASE_STUDY_FONT, "color": "#000000", "size": 14},
         xaxis_title=x_title, yaxis_title=y_title,
-        legend={"x": 1.02, "y": 1, "xanchor": "left",
-                "font": {"color": "#000000", "size": 11}},
-        margin={"l": 85, "r": 190, "t": 75, "b": 85})
-    for axis in (fig.update_xaxes, fig.update_yaxes):
-        axis(showgrid=True, gridcolor="#D0D0D0", griddash="dash",
-             tickfont={"color": "#000000"},
-             title_font={"color": "#000000"})
+        legend={"orientation": "v", "x": 1.02, "y": 1,
+                "xanchor": "left", "yanchor": "top",
+                "font": {"family": CASE_STUDY_FONT, "color": "#000000", "size": 12},
+                "bgcolor": "rgba(255,255,255,0)"},
+        margin={"l": 95, "r": 260, "t": 85, "b": 95},
+        hovermode="closest")
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
+    if axis_ranges is not None:
+        fig.update_xaxes(range=list(axis_ranges[0]), autorange=False)
+        fig.update_yaxes(range=list(axis_ranges[1]), autorange=False)
     return fig
 
-
 def case_study_scatter(frame, feature_name, simulation, direction, color,
-                       feature_stat):
+                       feature_stat, model, axis_ranges=None):
     """Actual/predicted displacement vs the chosen raw input summary."""
     f = frame[(frame["feature"] == feature_name) &
               (frame["output"] == direction)].copy()
@@ -722,9 +771,10 @@ def case_study_scatter(frame, feature_name, simulation, direction, color,
     if f.empty:
         return fig
     x = f[feature_stat].to_numpy(dtype=float)
+    base_marker = CASE_STUDY_SYMBOLS.get(model, "circle")
     for label, col, marker in (
-        ("Actual", f"actual_{direction}_mm", "circle-open"),
-        ("Predicted", f"predicted_{direction}_mm", "diamond-open"),
+        ("Actual", f"actual_{direction}_mm", base_marker + "-open"),
+        ("Predicted", f"predicted_{direction}_mm", base_marker),
     ):
         y = zero_small_displacements(f[col].to_numpy(dtype=float))
         fig.add_trace(go.Scatter(
@@ -749,10 +799,12 @@ def case_study_scatter(frame, feature_name, simulation, direction, color,
     return case_plot_style(
         fig, f"{feature_name} ({feature_stat.replace('input_feature_', '')})",
         f"Peak |{direction}| displacement (mm)",
-        f"Input feature vs actual/predicted |{direction}|")
+        f"Input feature vs actual/predicted |{direction}|",
+        axis_ranges=axis_ranges)
 
 
-def case_shap_scatter(frame, feature_name, simulation, direction, color, feature_stat):
+def case_shap_scatter(frame, feature_name, simulation, direction, color,
+                      feature_stat, model, axis_ranges=None):
     """Sampled grouped Shapley contribution (metres converted to millimetres)."""
     f = frame[(frame["feature"] == feature_name) &
               (frame["output"] == direction)].copy()
@@ -761,7 +813,8 @@ def case_shap_scatter(frame, feature_name, simulation, direction, color, feature
         x=f[feature_stat], y=f["shapley_value"] * 1000,
         mode="markers", name="SHAP contribution",
         text=f["simulation_id"],
-        marker={"symbol": "circle-open", "size": 10, "color": color,
+        marker={"symbol": CASE_STUDY_SYMBOLS.get(model, "circle") + "-open",
+                "size": 10, "color": color,
                 "line": {"width": 1.5, "color": color}},
         hovertemplate="Case %{text}<br>Feature: %{x:.5g}" +
                       "<br>Contribution: %{y:.5g} mm<extra></extra>"))
@@ -777,7 +830,8 @@ def case_shap_scatter(frame, feature_name, simulation, direction, color, feature
     return case_plot_style(
         fig, f"{feature_name} ({feature_stat.replace('input_feature_', '')})",
         f"Sampled Shapley contribution to |{direction}| (mm)",
-        f"Input feature vs SHAP contribution — |{direction}|")
+        f"Input feature vs SHAP contribution — |{direction}|",
+        axis_ranges=axis_ranges)
 
 
 with tab_case_study:
@@ -865,13 +919,24 @@ with tab_case_study:
                     with area:
                         color = CASE_STUDY_COLORS.get(model_selected, "#333333")
                         st.markdown(f"### Peak |{direction}|")
+                        x_name = f"{feature_selected} ({summary_kind})"
+                        st.caption("Model marker shape is consistent; open = actual, "
+                                   "filled = predicted; black star = selected simulation.")
+                        disp_ranges = case_axis_controls(
+                            direction, "displacement", x_name,
+                            f"Peak |{direction}| displacement (mm)")
                         st.plotly_chart(case_study_scatter(
                             sub, feature_selected, selected_simulation,
-                            direction, color, stat_col), use_container_width=True,
+                            direction, color, stat_col, model_selected,
+                            axis_ranges=disp_ranges), use_container_width=True,
                             key=f"shap_disp_{direction}")
+                        shap_ranges = case_axis_controls(
+                            direction, "contribution", x_name,
+                            f"Shapley contribution to |{direction}| (mm)")
                         st.plotly_chart(case_shap_scatter(
                             sub, feature_selected, selected_simulation,
-                            direction, color, stat_col), use_container_width=True,
+                            direction, color, stat_col, model_selected,
+                            axis_ranges=shap_ranges), use_container_width=True,
                             key=f"shap_phi_{direction}")
                         feature_rows = sample_subset.loc[
                             sample_subset["simulation_id"].eq(selected_simulation) &
@@ -886,9 +951,13 @@ with tab_case_study:
                             y=feature_rows["feature"], orientation="h",
                             marker_color=color))
                         fig_bar.update_yaxes(autorange="reversed")
+                        bar_ranges = case_axis_controls(
+                            direction, "feature_importance",
+                            "Shapley contribution (mm)", "Feature rank")
                         st.plotly_chart(case_plot_style(
                             fig_bar, "Shapley contribution (mm)", "Input feature",
-                            f"Top 15 feature contributions: {selected_simulation} — {direction}"),
+                            f"Top 15 feature contributions: {selected_simulation} — {direction}",
+                            axis_ranges=bar_ranges),
                             use_container_width=True, key=f"shap_bar_{direction}")
                 st.download_button(
                     "Download selected simulation SHAP values",
