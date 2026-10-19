@@ -762,86 +762,95 @@ def case_plot_style(fig, x_title, y_title, title, axis_ranges=None):
         fig.update_yaxes(range=list(axis_ranges[1]), autorange=False)
     return fig
 
-def case_study_scatter(frame, feature_name, simulation, direction, color,
-                       feature_stat, model, axis_ranges=None):
-    """Actual/predicted displacement vs the chosen raw input summary."""
-    f = frame[(frame["feature"] == feature_name) &
-              (frame["output"] == direction)].copy()
+
+def case_comparison_scatter(data, feature, direction, stat, kind, axis_ranges=None):
+    """Compare selected cases from multiple models/folds with red hollow diamonds."""
     fig = go.Figure()
-    if f.empty:
-        return fig
-    x = f[feature_stat].to_numpy(dtype=float)
-    base_marker = CASE_STUDY_SYMBOLS.get(model, "circle")
-    for label, col, marker in (
-        ("Actual", f"actual_{direction}_mm", base_marker + "-open"),
-        ("Predicted", f"predicted_{direction}_mm", base_marker),
-    ):
-        y = zero_small_displacements(f[col].to_numpy(dtype=float))
-        fig.add_trace(go.Scatter(
-            x=x, y=y, mode="markers", name=label,
-            text=f["simulation_id"], customdata=f[["split"]].to_numpy(),
-            marker={"symbol": marker, "size": 10, "color": color,
-                    "line": {"width": 1.5, "color": color}},
-            hovertemplate="Case %{text}<br>Split: %{customdata[0]}" +
-                          "<br>Feature summary: %{x:.5g}<br>Displacement: %{y:.5g} mm" +
-                          "<extra>%{fullData.name}</extra>"))
-        marked = f["simulation_id"].eq(simulation)
-        if marked.any():
-            point = f.loc[marked].iloc[0]
-            px = float(point[feature_stat])
-            py = float(zero_small_displacements([point[col]])[0])
+    subset = data.loc[data["feature"].eq(feature) & data["output"].eq(direction)]
+    for (model, fold), rows in subset.groupby(["model", "fold"], sort=True):
+        color = CASE_STUDY_COLORS.get(model, "#333333")
+        shape = CASE_STUDY_SYMBOLS.get(model, "circle")
+        x = rows[stat].to_numpy(dtype=float)
+        case_meta = rows[["simulation_id", "split"]].astype(str).to_numpy()
+        if kind == "displacement":
+            traces = [("Actual", f"actual_{direction}_mm", shape + "-open"),
+                      ("Predicted", f"predicted_{direction}_mm", shape)]
+            for title, column, marker in traces:
+                y = zero_small_displacements(rows[column].to_numpy(dtype=float))
+                fig.add_trace(go.Scatter(
+                    x=x, y=y, mode="markers", name=f"{model} / {fold} / {title}",
+                    marker={"symbol": marker, "color": color, "size": 10,
+                            "line": {"color": color, "width": 1.4}},
+                    customdata=case_meta,
+                    hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
+                                  "<br>Input %{x:.5g}<br>Displacement %{y:.5g} mm"
+                                  "<extra>%{fullData.name}</extra>"))
+                # Red hollow diamond highlights the selected cases, without covering
+                # the original model-specific symbol underneath.
+                fig.add_trace(go.Scatter(
+                    x=x, y=y, mode="markers", showlegend=False,
+                    marker={"symbol": "diamond-open", "color": "#E00000",
+                            "size": 18, "line": {"color": "#E00000", "width": 2}},
+                    customdata=case_meta,
+                    hovertemplate="Selected %{customdata[0]}<br>%{y:.5g} mm<extra></extra>"))
+            ylabel = f"Peak |{direction}| displacement (mm)"
+            title = f"Input feature vs actual/predicted |{direction}|"
+        else:
+            y = rows["shapley_value"].to_numpy(dtype=float) * 1000
             fig.add_trace(go.Scatter(
-                x=[px], y=[py], mode="markers",
-                name=f"Selected case — {label}",
-                marker={"symbol": "star", "size": 15,
-                        "color": "#000000", "line": {"color": color, "width": 2}},
-                text=[simulation], hovertemplate="%{text}<br>%{y:.5g} mm<extra>%{fullData.name}</extra>"))
-    return case_plot_style(
-        fig, f"{feature_name} ({feature_stat.replace('input_feature_', '')})",
-        f"Peak |{direction}| displacement (mm)",
-        f"Input feature vs actual/predicted |{direction}|",
-        axis_ranges=axis_ranges)
-
-
-def case_shap_scatter(frame, feature_name, simulation, direction, color,
-                      feature_stat, model, axis_ranges=None):
-    """Sampled grouped Shapley contribution (metres converted to millimetres)."""
-    f = frame[(frame["feature"] == feature_name) &
-              (frame["output"] == direction)].copy()
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=f[feature_stat], y=f["shapley_value"] * 1000,
-        mode="markers", name="SHAP contribution",
-        text=f["simulation_id"],
-        marker={"symbol": CASE_STUDY_SYMBOLS.get(model, "circle") + "-open",
-                "size": 10, "color": color,
-                "line": {"width": 1.5, "color": color}},
-        hovertemplate="Case %{text}<br>Feature: %{x:.5g}" +
-                      "<br>Contribution: %{y:.5g} mm<extra></extra>"))
-    marked = f["simulation_id"].eq(simulation)
-    if marked.any():
-        point = f.loc[marked].iloc[0]
+                x=x, y=y, mode="markers", name=f"{model} / {fold}",
+                marker={"symbol": shape + "-open", "color": color, "size": 10,
+                        "line": {"color": color, "width": 1.4}},
+                customdata=case_meta,
+                hovertemplate="Case %{customdata[0]}<br>Split %{customdata[1]}"
+                              "<br>Input %{x:.5g}<br>SHAP %{y:.5g} mm"
+                              "<extra>%{fullData.name}</extra>"))
+            fig.add_trace(go.Scatter(
+                x=x, y=y, mode="markers", showlegend=False,
+                marker={"symbol": "diamond-open", "color": "#E00000",
+                        "size": 18, "line": {"color": "#E00000", "width": 2}},
+                customdata=case_meta,
+                hovertemplate="Selected %{customdata[0]}<br>SHAP %{y:.5g} mm<extra></extra>"))
+            ylabel = f"Shapley contribution to |{direction}| (mm)"
+            title = f"Input feature vs SHAP contribution — |{direction}|"
+    if kind != "displacement":
+        fig.add_hline(y=0, line_dash="dash", line_color="#505050")
+    if len(fig.data):
         fig.add_trace(go.Scatter(
-            x=[point[feature_stat]], y=[point["shapley_value"] * 1000],
-            mode="markers", name="Selected case",
-            marker={"symbol": "star", "size": 15, "color": "#000000"},
-            hovertemplate="Selected case<br>SHAP: %{y:.5g} mm<extra></extra>"))
-    fig.add_hline(y=0, line_dash="dash", line_color="#505050")
+            x=[None], y=[None], mode="markers",
+            name="Selected cases (red hollow diamond)",
+            marker={"symbol": "diamond-open", "color": "#E00000",
+                    "size": 15, "line": {"color": "#E00000", "width": 2}}))
     return case_plot_style(
-        fig, f"{feature_name} ({feature_stat.replace('input_feature_', '')})",
-        f"Sampled Shapley contribution to |{direction}| (mm)",
-        f"Input feature vs SHAP contribution — |{direction}|",
-        axis_ranges=axis_ranges)
+        fig, f"{feature} ({stat.replace('input_feature_', '')})",
+        ylabel, title, axis_ranges=axis_ranges)
+
+
+def case_comparison_importance(data, direction):
+    """Mean absolute Shapley contributions for selected cases, by model."""
+    df = data.loc[data["output"].eq(direction)].copy()
+    df["abs_shap_mm"] = df["shapley_value"].abs() * 1000
+    ranking = df.groupby("feature")["abs_shap_mm"].mean().nlargest(15).index.tolist()
+    summary = df.loc[df["feature"].isin(ranking)].groupby(
+        ["model", "feature"])["abs_shap_mm"].mean()
+    fig = go.Figure()
+    for model in sorted(df["model"].unique()):
+        values = [float(summary.get((model, feature), 0)) for feature in ranking]
+        fig.add_trace(go.Bar(
+            x=values, y=ranking, orientation="h", name=model,
+            marker_color=CASE_STUDY_COLORS.get(model, "#333333")))
+    fig.update_layout(barmode="group", height=750)
+    fig.update_yaxes(autorange="reversed")
+    return case_plot_style(
+        fig, "Mean absolute Shapley contribution (mm)", "Input feature",
+        f"Top 15 features — selected cases — {direction}")
 
 
 with tab_case_study:
-    st.subheader("Case study — input features, SHAP contributions and peak displacements")
-    st.caption("Separate from the other dashboard tabs. SHAP sample data explain selected "
-               "held-out simulations, not all 780 simulations. SHAP values are approximate "
-               "and shown in mm (original contributions are in metres).")
-    st.caption("For grouped node, edge, and earthquake-window channels, the input on the "
-               "horizontal axis is a raw channel summary across nodes/edges/time windows, "
-               "not an individual scalar value.")
+    st.subheader("Case study — SHAP and peak displacement comparisons")
+    st.caption("Compare multiple models, folds and simulations together. Only sampled "
+               "held-out simulations have saved SHAP values. SHAP values are approximate "
+               "and shown in mm; node, edge and earthquake inputs use channel summaries.")
     try:
         shap_creds = st.secrets["google_service_account_json"]
         shap_id = st.secrets["google_drive"].get(
@@ -849,124 +858,101 @@ with tab_case_study:
         prediction_id = st.secrets["google_drive"].get(
             "overfitting_file_id", OVERFITTING_DRIVE_FILE_ID)
     except (KeyError, FileNotFoundError):
-        st.error("Missing Google service-account credentials in Streamlit Secrets.")
+        st.error("Missing Google service-account credentials.")
     else:
         if (st.button("Load case-study data", key="load_shap_case")
                 or st.session_state.get("shap_case_loaded", False)):
             try:
                 shap_data = load_shap_samples(shap_id, shap_creds)
-                prediction_data = load_comparison_csv(prediction_id, shap_creds)
-                if "split" not in prediction_data.columns:
-                    raise ValueError("Split labels are required in the prediction CSV.")
+                predictions = load_comparison_csv(prediction_id, shap_creds)
+                if "split" not in predictions.columns:
+                    raise ValueError("Split column missing from prediction CSV.")
                 join = ["simulation_id", "model", "fold"]
-                sample_keys = shap_data[join].drop_duplicates()
-                if prediction_data.duplicated(join).any():
-                    raise ValueError("Prediction CSV has duplicate simulation/model/fold keys.")
-                comparison = prediction_data.merge(sample_keys, on=join, how="inner")
-                if comparison.empty:
-                    raise ValueError("No matching simulation/model/fold combinations between SHAP and predictions.")
-                shap_data = shap_data.merge(
-                    comparison[join], on=join, how="inner")
+                if predictions.duplicated(join).any():
+                    raise ValueError("Duplicate prediction records.")
+                columns = join + ["split", "actual_Ux_mm", "predicted_Ux_mm",
+                                  "actual_Uy_mm", "predicted_Uy_mm"]
+                data = shap_data.merge(
+                    predictions[columns], on=join, how="inner",
+                    validate="many_to_one")
+                if data.empty:
+                    raise ValueError("SHAP and prediction datasets have no matching cases.")
                 st.session_state["shap_case_loaded"] = True
-                st.caption(f"Matched {comparison.simulation_id.nunique()} explained simulations "
-                           f"across {len(comparison)} model/fold predictions.")
-                c1, c2, c3 = st.columns(3)
-                model_selected = c1.selectbox(
-                    "ML model", sorted(shap_data["model"].unique()), key="shap_case_model")
-                available_folds = sorted(shap_data.loc[
-                    shap_data["model"].eq(model_selected), "fold"].unique())
-                fold_selected = c2.selectbox(
-                    "Fold", available_folds, key="shap_case_fold")
-                sample_subset = shap_data.loc[
-                    shap_data["model"].eq(model_selected) &
-                    shap_data["fold"].eq(fold_selected)].copy()
-                feature_selected = c3.selectbox(
-                    "Input feature", sorted(sample_subset["feature"].unique()),
-                    key="shap_case_feature")
-                cases_for_feature = sorted(sample_subset.loc[
-                    sample_subset["feature"].eq(feature_selected), "simulation_id"].unique())
-                selected_simulation = st.selectbox(
-                    "Highlighted simulation", cases_for_feature, key="shap_case_simulation")
-                summary_kind = st.selectbox(
-                    "Input feature statistic (X axis)",
-                    ["mean", "min", "max", "std"],
-                    key="shap_case_stat")
-                stat_col = "input_feature_" + summary_kind
-                p = comparison.loc[
-                    comparison["model"].eq(model_selected) &
-                    comparison["fold"].eq(fold_selected)].copy()
-                sub = sample_subset.merge(
-                    p[join + ["split", "actual_Ux_mm", "predicted_Ux_mm",
-                              "actual_Uy_mm", "predicted_Uy_mm"]],
-                    on=join, how="inner", validate="many_to_one")
-                target = p.loc[p["simulation_id"].eq(selected_simulation)]
-                if target.empty:
-                    st.warning("Selected SHAP simulation has no matching displacement record.")
+                st.caption(f"{data.simulation_id.nunique()} explained simulations match "
+                           "the prediction database.")
+                left, right = st.columns(2)
+                model_options = sorted(data["model"].unique())
+                fold_options = sorted(data["fold"].unique())
+                chosen_models = left.multiselect(
+                    "Models", model_options, default=model_options,
+                    key="shap_compare_models")
+                chosen_folds = right.multiselect(
+                    "Folds", fold_options, default=fold_options,
+                    key="shap_compare_folds")
+                filtered = data.loc[
+                    data["model"].isin(chosen_models) &
+                    data["fold"].isin(chosen_folds)].copy()
+                if filtered.empty:
+                    st.info("Select at least one model and fold.")
                 else:
-                    row = target.iloc[0]
-                    st.markdown(f"**{selected_simulation}** | {model_selected} | "
-                                f"{fold_selected} | {row['split']}")
-                    a1, a2, a3, a4 = st.columns(4)
-                    for area, label, column in (
-                        (a1, "Actual Ux (mm)", "actual_Ux_mm"),
-                        (a2, "Predicted Ux (mm)", "predicted_Ux_mm"),
-                        (a3, "Actual Uy (mm)", "actual_Uy_mm"),
-                        (a4, "Predicted Uy (mm)", "predicted_Uy_mm"),
-                    ):
-                        area.metric(label, f"{zero_small_displacements([row[column]])[0]:.5g}")
-                ux_case, uy_case = st.tabs(["Case study Ux", "Case study Uy"])
-                for direction, area in (("Ux", ux_case), ("Uy", uy_case)):
-                    with area:
-                        color = CASE_STUDY_COLORS.get(model_selected, "#333333")
-                        st.markdown(f"### Peak |{direction}|")
-                        x_name = f"{feature_selected} ({summary_kind})"
-                        st.caption("Model marker shape is consistent; open = actual, "
-                                   "filled = predicted; black star = selected simulation.")
-                        disp_ranges = case_axis_controls(
-                            direction, "displacement", x_name,
-                            f"Peak |{direction}| displacement (mm)")
-                        st.plotly_chart(case_study_scatter(
-                            sub, feature_selected, selected_simulation,
-                            direction, color, stat_col, model_selected,
-                            axis_ranges=disp_ranges), use_container_width=True,
-                            key=f"shap_disp_{direction}")
-                        shap_ranges = case_axis_controls(
-                            direction, "contribution", x_name,
-                            f"Shapley contribution to |{direction}| (mm)")
-                        st.plotly_chart(case_shap_scatter(
-                            sub, feature_selected, selected_simulation,
-                            direction, color, stat_col, model_selected,
-                            axis_ranges=shap_ranges), use_container_width=True,
-                            key=f"shap_phi_{direction}")
-                        feature_rows = sample_subset.loc[
-                            sample_subset["simulation_id"].eq(selected_simulation) &
-                            sample_subset["output"].eq(direction)].copy()
-                        feature_rows["Shapley contribution (mm)"] = (
-                            feature_rows["shapley_value"] * 1000)
-                        feature_rows = feature_rows.sort_values(
-                            "Shapley contribution (mm)",
-                            key=lambda col: col.abs(), ascending=False).head(15)
-                        fig_bar = go.Figure(go.Bar(
-                            x=feature_rows["Shapley contribution (mm)"],
-                            y=feature_rows["feature"], orientation="h",
-                            marker_color=color))
-                        fig_bar.update_yaxes(autorange="reversed")
-                        bar_ranges = case_axis_controls(
-                            direction, "feature_importance",
-                            "Shapley contribution (mm)", "Feature rank")
-                        st.plotly_chart(case_plot_style(
-                            fig_bar, "Shapley contribution (mm)", "Input feature",
-                            f"Top 15 feature contributions: {selected_simulation} — {direction}",
-                            axis_ranges=bar_ranges),
-                            use_container_width=True, key=f"shap_bar_{direction}")
-                st.download_button(
-                    "Download selected simulation SHAP values",
-                    sample_subset.loc[
-                        sample_subset["simulation_id"].eq(selected_simulation)
-                    ].to_csv(index=False).encode("utf-8"),
-                    file_name=f"{selected_simulation}_sampled_shap.csv",
-                    mime="text/csv", key="shap_case_download")
+                    feature = st.selectbox(
+                        "Input feature", sorted(filtered["feature"].unique()),
+                        key="shap_compare_feature")
+                    available_cases = sorted(filtered.loc[
+                        filtered["feature"].eq(feature), "simulation_id"].unique())
+                    chosen_cases = st.multiselect(
+                        "Simulations (select one, several, or all)",
+                        available_cases, default=available_cases,
+                        key="shap_compare_cases")
+                    stat = st.selectbox(
+                        "Input feature summary (X axis)",
+                        ["mean", "min", "max", "std"], key="shap_case_stat")
+                    chosen_data = filtered.loc[
+                        filtered["simulation_id"].isin(chosen_cases)].copy()
+                    if chosen_data.empty:
+                        st.info("Select at least one simulation.")
+                    else:
+                        st.caption("Selected cases use red unfilled diamonds. "
+                                   "Model colors and marker shapes are consistent; "
+                                   "open model marker = actual, filled = predicted.")
+                        overview = chosen_data[
+                            columns].drop_duplicates().copy()
+                        for col in ("actual_Ux_mm", "predicted_Ux_mm",
+                                    "actual_Uy_mm", "predicted_Uy_mm"):
+                            overview[col] = zero_small_displacements(overview[col])
+                        st.dataframe(overview, hide_index=True)
+                        ux_tab, uy_tab = st.tabs(["Case study Ux", "Case study Uy"])
+                        for direction, panel in (("Ux", ux_tab), ("Uy", uy_tab)):
+                            with panel:
+                                input_label = f"{feature} ({stat})"
+                                limits = case_axis_controls(
+                                    direction, "displacement", input_label,
+                                    f"Peak |{direction}| displacement (mm)")
+                                st.plotly_chart(case_comparison_scatter(
+                                    chosen_data, feature, direction,
+                                    "input_feature_" + stat, "displacement", limits),
+                                    use_container_width=True,
+                                    key=f"shap_compare_disp_{direction}")
+                                limits = case_axis_controls(
+                                    direction, "contribution", input_label,
+                                    "Shapley contribution (mm)")
+                                st.plotly_chart(case_comparison_scatter(
+                                    chosen_data, feature, direction,
+                                    "input_feature_" + stat, "shap", limits),
+                                    use_container_width=True,
+                                    key=f"shap_compare_phi_{direction}")
+                                st.caption("Feature importance uses mean absolute SHAP "
+                                           "across the selected cases and folds.")
+                                st.plotly_chart(
+                                    case_comparison_importance(chosen_data, direction),
+                                    use_container_width=True,
+                                    key=f"shap_compare_importance_{direction}")
+                        st.download_button(
+                            "Download selected SHAP cases with predictions",
+                            chosen_data.to_csv(index=False).encode("utf-8"),
+                            file_name="selected_shap_comparison.csv",
+                            mime="text/csv", key="shap_compare_download")
             except Exception as exc:
-                st.error(f"Could not load the SHAP case study: {type(exc).__name__}: {exc}")
-                st.caption("Ensure the SHAP CSV is shared with the same Google service account "
-                           "as your prediction CSV.")
+                st.error(f"Could not load SHAP comparison: {type(exc).__name__}: {exc}")
+                st.caption("Check that both Drive files are shared with "
+                           "the Streamlit service account.")
