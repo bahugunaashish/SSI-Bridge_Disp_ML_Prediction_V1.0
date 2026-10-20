@@ -1121,7 +1121,7 @@ def new_prediction_history_rows(history):
 
 
 def new_prediction_trend(data, feature, direction, model_filter, fold_filter,
-                         runs_filter, ranges):
+                         runs_filter, ranges, x_axis_label=None):
     selected = data.loc[
         data["Model"].isin(model_filter)
         & data["Fold"].isin(fold_filter)
@@ -1148,7 +1148,7 @@ def new_prediction_trend(data, feature, direction, model_filter, fold_filter,
                           "<br>Input %{x:.5g}<br>Prediction %{y:.5g} mm"
                           "<extra>%{fullData.name}</extra>",
         ))
-    label = NEW_PREDICTION_FEATURES.get(feature, feature)
+    label = (x_axis_label or "").strip() or NEW_PREDICTION_FEATURES.get(feature, feature)
     return case_plot_style(fig, label, f"Predicted peak |{direction}| (mm)",
                            f"Predicted |{direction}| vs {label}", ranges)
 
@@ -1367,6 +1367,13 @@ with tab_new_prediction:
             chosen_folds = st.multiselect(
                 "Folds to plot", fold_options, default=fold_options,
                 key="new_case_trend_folds")
+        custom_x_label = st.text_input(
+            "Custom X-axis label (optional)",
+            value="",
+            placeholder=NEW_PREDICTION_FEATURES.get(x_key, x_key),
+            help="Leave blank to use the selected engineering feature name. "
+                 "Changes the displayed X-axis label, not the plotted data.",
+            key="new_case_custom_x_axis_label")
         run_options = sorted(history_table["Run"].unique().tolist())
         chosen_runs = st.multiselect(
             "Simulation runs to plot", run_options, default=run_options,
@@ -1397,7 +1404,8 @@ with tab_new_prediction:
                     st.plotly_chart(
                         new_prediction_trend(
                             history_table, x_key, direction,
-                            chosen_models, chosen_folds, chosen_runs, limits),
+                            chosen_models, chosen_folds, chosen_runs, limits,
+                            x_axis_label=custom_x_label),
                         use_container_width=True,
                         key=f"new_case_trend_plot_{direction}")
         st.download_button(
