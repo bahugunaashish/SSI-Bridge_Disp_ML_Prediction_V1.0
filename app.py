@@ -996,8 +996,161 @@ def drive_list_children(folder_id: str, credentials_json: str) -> list:
     return files
 
 
+
+@st.cache_data(show_spinner="Loading simulation matrix...", ttl=3600)
+def load_new_prediction_matrix(folder_id: str, credentials_json: str) -> pd.DataFrame:
+    """Download original input spreadsheet through the existing Drive service account."""
+    items = drive_list_children(folder_id, credentials_json)
+    matrix = next((item for item in items
+                   if item["name"] == "SSI_Simulation_Matrix1(4).xlsx"), None)
+    if matrix is None:
+        raise FileNotFoundError("SSI_Simulation_Matrix1(4).xlsx not found in prediction folder")
+    info = json.loads(credentials_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    )
+    response = AuthorizedSession(credentials).get(
+        f"https://www.googleapis.com/drive/v3/files/{matrix['id']}",
+        params={"alt": "media"}, timeout=120,
+    )
+    response.raise_for_status()
+    df = pd.read_excel(io.BytesIO(response.content),
+                       sheet_name="Simulation_Matrix", engine="openpyxl")
+    df = df.dropna(subset=["Simulation_No"]).copy()
+    df["Simulation_No"] = pd.to_numeric(df["Simulation_No"], errors="coerce")
+    df = df.dropna(subset=["Simulation_No"])
+    df["Simulation_No"] = df["Simulation_No"].astype(int)
+    df = df.drop_duplicates(subset=["Simulation_No"])
+    if df.empty:
+        raise ValueError("No numbered simulations found in the original Excel matrix")
+    return df
+
+
+def input_from_matrix_row(row, column, label, key_prefix, *, positive=False,
+                          whole=False):
+    """Editable scalar engineering input, initialized from a selected Excel row."""
+    value = float(row[column])
+    if not np.isfinite(value):
+        raise ValueError(f"Missing/invalid matrix input: {column}")
+    key = f"{key_prefix}_{column}"
+    if whole:
+        # Existing simulation reader rounds spans/piles to integers.
+        value = max(1, int(round(value)))
+        return st.number_input(label, min_value=1, value=value, step=1, key=key)
+    opts = {"min_value": 0.000001} if positive else {}
+    if positive and value <= 0:
+        raise ValueError(f"Expected positive input: {column}")
+    return st.number_input(label, value=value, format="%.6f", key=key, **opts)
+
+
 with tab_new_prediction:
     st.subheader("New SSI response prediction")
+    st.markdown("### Select and customize a new simulation")
+    st.write(
+        "Choose an original Excel matrix row as a starting template, then modify "
+        "any engineering inputs. Edited values are for a new proposed case; "
+        "the original Excel workbook is not changed."
+    )
+    if st.button("Load simulation matrix", key="newpred_load"):
+        st.session_state["newpred_loaded"] = True
+    if st.session_state.get("newpred_loaded", False):
+        try:
+            matrix_df = load_new_prediction_matrix(
+                NEW_PREDICTION_DRIVE_FOLDER_ID,
+                st.secrets["google_service_account_json"],
+            )
+            options = matrix_df["Simulation_No"].tolist()
+            st.caption(f"{len(options):,} matrix rows available")
+            if st.button("Choose a random matrix row", key="newpred_random"):
+                st.session_state["newpred_case"] = int(np.random.default_rng().choice(options))
+            if st.session_state.get("newpred_case") not in options:
+                st.session_state["newpred_case"] = options[0]
+            selected_id = st.selectbox(
+                "Starting simulation row", options,
+                key="newpred_case",
+                format_func=lambda x: f"Simulation {x}",
+            )
+            row = matrix_df.loc[matrix_df["Simulation_No"].eq(selected_id)].iloc[0]
+            prefix = f"newpred_edit_{selected_id}"
+            edited = {"Simulation_No": int(selected_id)}
+            left, right = st.columns(2)
+            with left:
+                st.markdown("**Structural geometry and configuration**")
+                geometry = [
+                    ("Column height H (m)", "Column height H (m)", True, False),
+                    ("Column/pile diameter D (m)", "Column/pile diameter D (m)", True, False),
+                    ("Number of spans", "Number of spans (-)", True, True),
+                    ("Span length (m)", "Span length (m)", True, False),
+                    ("Number of piles", "Number of piles (-)", True, True),
+                    ("Pile spacing (m)", "Pile spacing (m)", True, False),
+                    ("Pile embedment length Lp (m)", "Pile embedment length Lp (m)", True, False),
+                ]
+                for label, column, positive, whole in geometry:
+                    edited[column] = input_from_matrix_row(
+                        row, column, label, prefix, positive=positive, whole=whole)
+                edited["Number of bents (-)"] = int(edited["Number of spans (-)"]) + 1
+                st.caption(f"Calculated number of bents: {edited['Number of bents (-)']}")
+                st.markdown("**Concrete and steel**")
+                materials = [
+                    ("Longitudinal reinforcement ratio (%)", "Longitudinal steel ratio pl (%)"),
+                    ("Transverse reinforcement ratio (%)", "Transverse steel ratio pt (%)"),
+                    ("Concrete strength fc (MPa)", "Concrete strength fc (MPa)"),
+                    ("Steel yield strength fy (MPa)", "Steel yield strength fy (MPa)"),
+                ]
+                for label, column in materials:
+                    edited[column] = input_from_matrix_row(
+                        row, column, label, prefix, positive=True)
+            with right:
+                st.markdown("**Soil and earthquake selection**")
+                edited["Soil Profile (based on SPT-N)"] = st.text_input(
+                    "Soil profile (existing profile filename/stem)",
+                    value=str(row["Soil Profile (based on SPT-N)"]),
+                    key=f"{prefix}_soil")
+                edited["EQ"] = st.text_input(
+                    "Earthquake record (existing record identifier)",
+                    value=str(row["EQ"]),
+                    key=f"{prefix}_eq")
+                st.caption(
+                    "Soil profile and earthquake identifiers must match the files "
+                    "in the connected Google Drive folders."
+                )
+                st.markdown("**Earthquake loading properties**")
+                edited["Peak ground acceleration PGA (g)"] = input_from_matrix_row(
+                    row, "Peak ground acceleration PGA (g)",
+                    "Target PGA (g)", prefix, positive=True)
+                edited["Ground motion time step (s)"] = input_from_matrix_row(
+                    row, "Ground motion time step (s)",
+                    "Ground-motion time step (s)", prefix, positive=True)
+                edited["Angle of incidence (deg)"] = input_from_matrix_row(
+                    row, "Angle of incidence (deg)",
+                    "Incidence angle (degrees)", prefix)
+            st.markdown("**Customized simulation inputs**")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Parameter": name, "Value": value}
+                     for name, value in edited.items() if name != "Simulation_No"]
+                ),
+                hide_index=True, use_container_width=True,
+            )
+            st.download_button(
+                "Download customized input parameters (JSON)",
+                data=json.dumps({
+                    "source_simulation": int(selected_id),
+                    "edited_matrix_parameters": edited,
+                    "note": "New case; not an OpenSees dynamic result or an ML prediction",
+                }, indent=2),
+                file_name=f"new_ssi_case_from_simulation_{selected_id}.json",
+                mime="application/json", key="newpred_download_inputs",
+            )
+            st.info(
+                "These edited values are ready to be passed to the original "
+                "simulation-matrix reader and feature-only OpenSees builder. "
+                "The actual feature-generation and prediction execution is "
+                "not enabled yet; no prediction is being claimed."
+            )
+        except Exception as exc:
+            st.error(f"Could not prepare editable matrix row: {type(exc).__name__}: {exc}")
+
     st.markdown("#### ML model input features")
     st.caption(
         "Counts are based on the deployed training/inference feature definitions. "
