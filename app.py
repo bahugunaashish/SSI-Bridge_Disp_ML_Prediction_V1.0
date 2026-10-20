@@ -1309,6 +1309,163 @@ with tab_new_prediction:
                     except Exception as exc:
                         st.error(f"New-case prediction failed: {type(exc).__name__}: {exc}")
 
+            with st.expander("Parametric study — sweep one input parameter", expanded=False):
+                st.write(
+                    "Vary one parameter across a specified range while keeping "
+                    "all other currently edited inputs fixed. Each successful "
+                    "case is automatically added to cumulative displacement plots.")
+                sweep_options = {
+                    key: label for key, label in NEW_PREDICTION_FEATURES.items()
+                    if key in edited and isinstance(edited[key], (int, float))
+                    and not isinstance(edited[key], bool)
+                }
+                sweep_key = st.selectbox(
+                    "Parameter to vary", list(sweep_options),
+                    format_func=lambda name: sweep_options[name],
+                    key="new_case_sweep_feature")
+                current_value = float(edited[sweep_key])
+                sweep_is_integer = sweep_key in (
+                    "Number of spans (-)", "Number of piles (-)")
+                sweep_defaults = st.session_state.get("new_case_sweep_last_feature")
+                if sweep_defaults != sweep_key:
+                    st.session_state["new_case_sweep_min"] = current_value
+                    st.session_state["new_case_sweep_max"] = current_value + (
+                        2.0 if sweep_is_integer else max(0.2 * abs(current_value), 0.1))
+                    st.session_state["new_case_sweep_step"] = (
+                        1.0 if sweep_is_integer else max(0.1 * abs(current_value), 0.05))
+                    st.session_state["new_case_sweep_last_feature"] = sweep_key
+                sweep_left, sweep_mid, sweep_right = st.columns(3)
+                with sweep_left:
+                    sweep_min = st.number_input(
+                        "Minimum value", format="%.6f",
+                        key="new_case_sweep_min")
+                with sweep_mid:
+                    sweep_max = st.number_input(
+                        "Maximum value", format="%.6f",
+                        key="new_case_sweep_max")
+                with sweep_right:
+                    sweep_step = st.number_input(
+                        "Interval (step)", min_value=0.000001, format="%.6f",
+                        key="new_case_sweep_step")
+                sweep_values = []
+                sweep_problem = None
+                if sweep_max < sweep_min:
+                    sweep_problem = "Maximum value must be greater than or equal to minimum."
+                elif sweep_step <= 0:
+                    sweep_problem = "Step must be positive."
+                else:
+                    count = int(np.floor(
+                        (sweep_max - sweep_min) / sweep_step + 1e-9)) + 1
+                    if count > 12:
+                        sweep_problem = (
+                            f"Your range would create {count} cases. "
+                            "Use a larger interval or a smaller range (maximum 12 per batch).")
+                    elif count < 2:
+                        sweep_problem = "Choose a range and interval that produce at least two cases."
+                    else:
+                        sweep_values = [
+                            round(sweep_min + i * sweep_step, 8)
+                            for i in range(count)
+                        ]
+                        if sweep_is_integer and any(
+                                abs(value - round(value)) > 1e-7
+                                for value in sweep_values):
+                            sweep_problem = (
+                                "This parameter requires whole-number minimum and interval.")
+                        elif any(value <= 0 for value in sweep_values) and sweep_key not in (
+                                "Angle of incidence (deg)",):
+                            sweep_problem = "The selected parameter requires positive values."
+                        elif (sweep_key == "Angle of incidence (deg)"
+                              and any(not 0 <= value <= 360 for value in sweep_values)):
+                            sweep_problem = "Incidence angle must remain between 0 and 360 degrees."
+                if sweep_problem:
+                    st.warning(sweep_problem)
+                else:
+                    st.caption(
+                        f"{len(sweep_values)} cases: "
+                        + ", ".join(f"{value:g}" for value in sweep_values)
+                        + f" {sweep_options[sweep_key]}. All other input values remain unchanged.")
+                    if sweep_key == "Pile embedment length Lp (m)" and any(
+                            value <= float(edited["Column height H (m)"])
+                            for value in sweep_values):
+                        sweep_problem = (
+                            "Pile embedment length must exceed the current column height.")
+                        st.warning(sweep_problem)
+                if st.button(
+                        f"Generate features and predict {len(sweep_values)} sweep cases",
+                        key="new_case_run_parametric",
+                        disabled=bool(sweep_problem) or not sweep_values,
+                        type="primary"):
+                    from new_case_engine import build_new_case
+                    progress = st.progress(0.0)
+                    progress_detail = st.empty()
+                    sweep_summary = []
+                    for sweep_idx, sweep_value in enumerate(sweep_values):
+                        progress_detail.info(
+                            f"Case {sweep_idx + 1}/{len(sweep_values)} — "
+                            f"{sweep_options[sweep_key]} = {sweep_value:g}")
+                        sweep_inputs = dict(edited)
+                        sweep_inputs[sweep_key] = (
+                            int(round(sweep_value)) if sweep_is_integer else float(sweep_value))
+                        if sweep_key == "Number of spans (-)":
+                            sweep_inputs["Number of bents (-)"] = (
+                                int(sweep_inputs[sweep_key]) + 1)
+                        try:
+                            input_file, new_case_id, temp_owner, graph_stats = build_new_case(
+                                sweep_inputs, int(selected_id),
+                                NEW_PREDICTION_DRIVE_FOLDER_ID,
+                                st.secrets["google_service_account_json"],
+                                Path(__file__).resolve().parent)
+                            try:
+                                case_results = {}
+                                for name in active_models:
+                                    case_results[name] = predict_folds(
+                                        input_file, new_case_id, root, name,
+                                        fold=None if active_folds == "5-fold ensemble"
+                                        else active_folds)
+                            finally:
+                                temp_owner.cleanup()
+                            stored = st.session_state.setdefault("new_case_history", [])
+                            run_number = 1 + max(
+                                (int(x.get("run", 0)) for x in stored), default=0)
+                            stored.append({
+                                "run": run_number,
+                                "source_simulation": int(selected_id),
+                                "input_features": sweep_inputs,
+                                "graph_features": graph_stats,
+                                "results": case_results,
+                            })
+                            averaged = all_model_average(case_results, active_models)["mean_m"]
+                            sweep_summary.append({
+                                "Parameter": sweep_options[sweep_key],
+                                "Input value": sweep_value,
+                                "Run": run_number,
+                                "Average Ux (mm)": 1000.0 * averaged[0],
+                                "Average Uy (mm)": 1000.0 * averaged[1],
+                                "Status": "Predicted",
+                            })
+                        except Exception as exc:
+                            sweep_summary.append({
+                                "Parameter": sweep_options[sweep_key],
+                                "Input value": sweep_value,
+                                "Run": None,
+                                "Average Ux (mm)": None,
+                                "Average Uy (mm)": None,
+                                "Status": f"Failed: {type(exc).__name__}: {exc}",
+                            })
+                        progress.progress((sweep_idx + 1) / len(sweep_values))
+                    successes = sum(row["Status"] == "Predicted" for row in sweep_summary)
+                    progress_detail.success(
+                        f"Parametric study finished: {successes}/{len(sweep_values)} "
+                        "cases predicted and added to the cumulative plot.")
+                    st.dataframe(pd.DataFrame(sweep_summary),
+                                 hide_index=True, use_container_width=True)
+                    if successes < len(sweep_values):
+                        st.warning(
+                            "Some cases failed validation or feature generation; "
+                            "successful cases remain in the history below.")
+                    st.session_state["new_case_trend_input"] = sweep_key
+
             st.markdown("**Customized simulation inputs**")
             st.dataframe(
                 pd.DataFrame(
