@@ -10,3 +10,8 @@ google-auth-httplib2
 requests
 plotly>=5.18,<7
 openpyxl>=3.1,<4
+openseespy
+opsvis
+vfo
+opstool
+matplotlib
