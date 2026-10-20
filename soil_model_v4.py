@@ -9,11 +9,8 @@ import opsvis as opsv
 import matplotlib.pyplot as plt
 import math
 import numpy as np
-import vfo.vfo as vfo
 import time as tt
 from matplotlib.animation import FuncAnimation
-import opstool as ops
-#import opstool.vis.plotly as opsvis
 from units_v4 import get_units, CreateEqDof, CollectMaxNodes
 from getMat_v4 import *
 from getSection2_v4 import *
