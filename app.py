@@ -1043,6 +1043,82 @@ def input_from_matrix_row(row, column, label, key_prefix, *, positive=False,
     return st.number_input(label, value=value, format="%.6f", key=key, **opts)
 
 
+
+NEW_PREDICTION_FEATURES = {
+    "Peak ground acceleration PGA (g)": "Target PGA (g)",
+    "Column height H (m)": "Column height (m)",
+    "Column/pile diameter D (m)": "Column/pile diameter (m)",
+    "Span length (m)": "Span length (m)",
+    "Number of spans (-)": "Number of spans",
+    "Number of piles (-)": "Number of piles",
+    "Pile spacing (m)": "Pile spacing (m)",
+    "Pile embedment length Lp (m)": "Pile embedment (m)",
+    "Longitudinal steel ratio pl (%)": "Longitudinal reinforcement (%)",
+    "Transverse steel ratio pt (%)": "Transverse reinforcement (%)",
+    "Concrete strength fc (MPa)": "Concrete strength (MPa)",
+    "Steel yield strength fy (MPa)": "Steel yield strength (MPa)",
+    "Angle of incidence (deg)": "Earthquake incidence angle (degrees)",
+    "Ground motion time step (s)": "Ground motion time step (s)",
+    "node_z_mean_m": "Mean structural node Z (m)",
+    "node_z_min_m": "Minimum structural node Z (m)",
+    "node_z_max_m": "Maximum structural node Z (m)",
+}
+
+
+def new_prediction_history_rows(history):
+    """Create plot data only from real completed saved-checkpoint predictions."""
+    rows = []
+    for item in history:
+        if not item.get("results"):
+            continue
+        for model_name, result in item["results"].items():
+            for fold, values in zip(result["folds"], result["predictions_m"]):
+                row = {
+                    "Run": item["run"],
+                    "Source simulation": item["source_simulation"],
+                    "Model": model_name, "Fold": fold,
+                    "Ux (mm)": 1000.0 * float(values[0]),
+                    "Uy (mm)": 1000.0 * float(values[1]),
+                }
+                row.update(item.get("input_features", {}))
+                row.update(item.get("graph_features", {}))
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def new_prediction_trend(data, feature, direction, model_filter, fold_filter,
+                         runs_filter, ranges):
+    selected = data.loc[
+        data["Model"].isin(model_filter)
+        & data["Fold"].isin(fold_filter)
+        & data["Run"].isin(runs_filter)
+    ].copy()
+    fig = go.Figure()
+    fold_symbols = {1: "circle", 2: "square", 3: "diamond",
+                    4: "triangle-up", 5: "triangle-down"}
+    for (model_name, fold), part in selected.groupby(["Model", "Fold"], sort=True):
+        fold_number = int(str(fold).replace("fold_", ""))
+        fig.add_trace(go.Scatter(
+            x=pd.to_numeric(part[feature], errors="coerce"),
+            y=zero_small_displacements(
+                pd.to_numeric(part[f"{direction} (mm)"], errors="coerce")),
+            mode="markers", name=f"{model_name} / {fold}",
+            marker={
+                "symbol": fold_symbols.get(fold_number, "circle"),
+                "size": 8 + 2 * fold_number,
+                "color": CASE_STUDY_COLORS.get(model_name, "#333333"),
+                "line": {"color": "#222222", "width": 0.6},
+            },
+            customdata=part[["Run", "Source simulation"]].astype(str).to_numpy(),
+            hovertemplate="Run %{customdata[0]}<br>Starting matrix row %{customdata[1]}"
+                          "<br>Input %{x:.5g}<br>Prediction %{y:.5g} mm"
+                          "<extra>%{fullData.name}</extra>",
+        ))
+    label = NEW_PREDICTION_FEATURES.get(feature, feature)
+    return case_plot_style(fig, label, f"Predicted peak |{direction}| (mm)",
+                           f"Predicted |{direction}| vs {label}", ranges)
+
+
 with tab_new_prediction:
     st.subheader("New SSI response prediction")
     st.markdown("### Select and customize a new simulation")
@@ -1124,6 +1200,68 @@ with tab_new_prediction:
                 edited["Angle of incidence (deg)"] = input_from_matrix_row(
                     row, "Angle of incidence (deg)",
                     "Incidence angle (degrees)", prefix)
+
+            st.markdown("### Generate features and predict displacement")
+            active_models = st.multiselect(
+                "Trained ML models", sorted(models), default=["mlp"],
+                key="new_case_models_select")
+            active_folds = st.selectbox(
+                "Folds to predict",
+                ["5-fold ensemble", "fold_1", "fold_2", "fold_3", "fold_4", "fold_5"],
+                key="new_case_folds_select")
+            st.caption(
+                "The original OpenSees code constructs the structure and its "
+                "input graph only. Dynamic analysis and ML training are not run.")
+            if st.button("Generate Features & Predict Displacement",
+                         type="primary", key="new_case_predict_button"):
+                if not active_models:
+                    st.error("Select at least one trained ML model.")
+                else:
+                    try:
+                        from new_case_engine import build_new_case
+                        with st.spinner("Building OpenSees input graph and running trained checkpoints..."):
+                            input_file, new_case_id, temp_owner, graph_stats = build_new_case(
+                                edited, int(selected_id),
+                                NEW_PREDICTION_DRIVE_FOLDER_ID,
+                                st.secrets["google_service_account_json"],
+                                Path(__file__).resolve().parent,
+                            )
+                            try:
+                                case_results = {}
+                                for name in active_models:
+                                    case_results[name] = predict_folds(
+                                        input_file, new_case_id, root, name,
+                                        fold=None if active_folds == "5-fold ensemble"
+                                        else active_folds)
+                            finally:
+                                temp_owner.cleanup()
+                        stored = st.session_state.setdefault("new_case_history", [])
+                        run_number = 1 + max((int(x.get("run", 0)) for x in stored),
+                                             default=0)
+                        stored.append({
+                            "run": run_number,
+                            "source_simulation": int(selected_id),
+                            "input_features": dict(edited),
+                            "graph_features": graph_stats,
+                            "results": case_results,
+                        })
+                        st.success(
+                            f"Prediction run {run_number} completed and automatically "
+                            "added to the cumulative comparison plots below.")
+                        preview = []
+                        for model_name, result in case_results.items():
+                            preview.append({
+                                "Model": model_name,
+                                "Ux (mm)": 1000.0 * result["mean_m"][0],
+                                "Uy (mm)": 1000.0 * result["mean_m"][1],
+                                "Fold SD Ux (mm)": 1000.0 * result["fold_std_m"][0],
+                                "Fold SD Uy (mm)": 1000.0 * result["fold_std_m"][1],
+                            })
+                        st.dataframe(pd.DataFrame(preview), hide_index=True,
+                                     use_container_width=True)
+                    except Exception as exc:
+                        st.error(f"New-case prediction failed: {type(exc).__name__}: {exc}")
+
             st.markdown("**Customized simulation inputs**")
             st.dataframe(
                 pd.DataFrame(
@@ -1150,6 +1288,105 @@ with tab_new_prediction:
             )
         except Exception as exc:
             st.error(f"Could not prepare editable matrix row: {type(exc).__name__}: {exc}")
+
+
+    st.markdown("### Cumulative predictions and input-response trends")
+    history = st.session_state.get("new_case_history", [])
+    st.caption(
+        f"{len(history)} successful prediction runs in this session. "
+        "Every new successful prediction is automatically added; previous "
+        "points are not replaced.")
+    history_table = new_prediction_history_rows(history)
+    if not history_table.empty:
+        st.dataframe(history_table, hide_index=True, use_container_width=True)
+        feature_choices = [
+            key for key in NEW_PREDICTION_FEATURES
+            if key in history_table.columns
+            and pd.to_numeric(history_table[key], errors="coerce").notna().any()
+        ]
+        fcol, mcol, foldcol = st.columns(3)
+        with fcol:
+            x_key = st.selectbox(
+                "Input feature for X axis", feature_choices,
+                format_func=lambda key: NEW_PREDICTION_FEATURES[key],
+                key="new_case_trend_input")
+        with mcol:
+            model_options = sorted(history_table["Model"].unique())
+            chosen_models = st.multiselect(
+                "Models to plot", model_options, default=model_options,
+                key="new_case_trend_models")
+        with foldcol:
+            fold_options = sorted(history_table["Fold"].unique())
+            chosen_folds = st.multiselect(
+                "Folds to plot", fold_options, default=fold_options,
+                key="new_case_trend_folds")
+        run_options = sorted(history_table["Run"].unique().tolist())
+        chosen_runs = st.multiselect(
+            "Simulation runs to plot", run_options, default=run_options,
+            key="new_case_trend_runs")
+        with st.expander("Custom X/Y axis limits", expanded=False):
+            manual = st.checkbox("Set manual axis ranges", key="new_case_axes_manual")
+            limits = None
+            if manual:
+                left_axis, right_axis = st.columns(2)
+                with left_axis:
+                    xmin = st.number_input("X minimum", value=0.0, key="new_case_xmin")
+                    xmax = st.number_input("X maximum", value=10.0, key="new_case_xmax")
+                with right_axis:
+                    ymin = st.number_input("Y minimum (mm)", value=0.0,
+                                            key="new_case_ymin")
+                    ymax = st.number_input("Y maximum (mm)", value=10.0,
+                                            key="new_case_ymax")
+                if xmax > xmin and ymax > ymin:
+                    limits = ((xmin, xmax), (ymin, ymax))
+                else:
+                    st.warning("Maximum limits must exceed minimum limits.")
+        if (chosen_models and chosen_folds and chosen_runs and
+                (not manual or limits is not None)):
+            ux_tab_new, uy_tab_new = st.tabs([
+                "Predicted Ux vs input", "Predicted Uy vs input"])
+            for direction, panel in (("Ux", ux_tab_new), ("Uy", uy_tab_new)):
+                with panel:
+                    st.plotly_chart(
+                        new_prediction_trend(
+                            history_table, x_key, direction,
+                            chosen_models, chosen_folds, chosen_runs, limits),
+                        use_container_width=True,
+                        key=f"new_case_trend_plot_{direction}")
+        st.download_button(
+            "Download all predicted cases (CSV)",
+            history_table.to_csv(index=False).encode("utf-8"),
+            file_name="new_ssi_predictions.csv", mime="text/csv",
+            key="new_case_history_csv")
+        st.download_button(
+            "Save cumulative history (JSON)",
+            json.dumps(history, indent=2),
+            file_name="new_ssi_prediction_history.json",
+            mime="application/json", key="new_case_history_json")
+        if st.button("Clear prediction history", key="new_case_clear_history"):
+            st.session_state["new_case_history"] = []
+            st.rerun()
+    uploaded_history = st.file_uploader(
+        "Restore earlier prediction history (JSON backup)", type=["json"],
+        key="new_case_history_uploader")
+    if uploaded_history is not None and st.button(
+            "Restore history", key="new_case_restore_history"):
+        try:
+            candidate = json.loads(uploaded_history.getvalue().decode("utf-8"))
+            if (not isinstance(candidate, list) or
+                    any(not isinstance(record, dict)
+                        or not {"run", "source_simulation", "input_features",
+                                "results"}.issubset(record)
+                        for record in candidate)):
+                raise ValueError("File does not contain saved new-case prediction history")
+            st.session_state["new_case_history"] = candidate
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not restore history: {exc}")
+    st.caption(
+        "Prediction history remains available during the active Streamlit session. "
+        "Download JSON and restore it after closing or refreshing the app. "
+        "Points represent checkpoint inference, not OpenSees dynamic results.")
 
     st.markdown("#### ML model input features")
     st.caption(
