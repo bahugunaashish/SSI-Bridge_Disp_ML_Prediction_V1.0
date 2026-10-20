@@ -189,7 +189,7 @@ def metric_values(actual, predicted):
     return r2, mape, rmse, residual_std, int(nonzero.sum())
 
 
-def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=None, legend_rmse=False):
+def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=None, legend_rmse=False, distinguish_splits=False):
     """Publication-style actual/predicted scatter plot with external legend."""
     actual_col = f"actual_{direction}_mm"
     pred_col = f"predicted_{direction}_mm"
@@ -221,6 +221,13 @@ def plot_comparison(data: pd.DataFrame, direction: str, title: str, axis_ranges=
         model = str(subset["model"].iloc[0])
         fold_label = str(subset["fold"].iloc[0]) if " / fold_" in label else "mean"
         marker_symbol = model_symbols[model]
+        if distinguish_splits:
+            # Dataset split is identifiable by marker shape; model stays color-coded.
+            split = str(subset["split"].iloc[0]).lower()
+            split_symbols = {"train": "circle-open",
+                             "validation": "diamond-open",
+                             "test": "square-open"}
+            marker_symbol = split_symbols.get(split, marker_symbol)
         color = model_colors[model]
         # Keep existing legends untouched; optionally show RMSE for overfitting plots.
         legend_label = f"{label} | RMSE={rmse:.3f} mm" if legend_rmse else label
@@ -597,13 +604,17 @@ with tab_overfit:
                             st.markdown(f"### Peak |{direction}| performance")
                             st.caption("Each scatter series represents one model/dataset"
                                        + ("/fold." if fold_detail else "; points across selected folds are pooled."))
-                            st.caption("Legend: RMSE (mm), calculated for each displayed series. "
-                                       "R², MAPE, and Error SD are available in the tables below.")
+                            st.caption("Scatter marker shapes: training = ○ circle, "
+                                       "validation = ◇ diamond, testing = □ square. "
+                                       "Marker colors distinguish ML models; the legend "
+                                       "identifies each model/dataset and its RMSE (mm). "
+                                       "R², MAPE, and Error SD are in the tables below.")
                             custom_ranges = overfit_axis_controls(direction)
                             plot, _ = plot_comparison(
                                 scatter_data, direction,
                                 f"Peak |{direction}| — training vs. validation vs. test",
-                                axis_ranges=custom_ranges, legend_rmse=True)
+                                axis_ranges=custom_ranges, legend_rmse=True,
+                                distinguish_splits=True)
                             st.plotly_chart(plot, use_container_width=True,
                                             key=f"overfit_plot_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
