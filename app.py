@@ -1065,6 +1065,29 @@ NEW_PREDICTION_FEATURES = {
 }
 
 
+def all_model_average(results, required_models=None):
+    """Equal-weight average across ML model types, after averaging selected folds."""
+    names = sorted(required_models if required_models is not None else results)
+    if not names or any(name not in results for name in names):
+        raise ValueError("All trained models must have successful predictions")
+    means = np.asarray([results[name]["mean_m"] for name in names], dtype=float)
+    if means.shape != (len(names), 2) or not np.isfinite(means).all():
+        raise ValueError("Invalid trained-model predictions")
+    # Per-fold averages allow the new-case scatter to use existing fold markers.
+    fold_sets = [set(results[name]["folds"]) for name in names]
+    if any(folds != fold_sets[0] for folds in fold_sets):
+        raise ValueError("Selected models do not share the same folds")
+    by_fold = {}
+    for fold in sorted(fold_sets[0]):
+        values = []
+        for name in names:
+            index = results[name]["folds"].index(fold)
+            values.append(results[name]["predictions_m"][index])
+        by_fold[fold] = np.asarray(values, dtype=float).mean(axis=0).tolist()
+    return {"model_count": len(names), "mean_m": means.mean(axis=0).tolist(),
+            "by_fold_m": by_fold}
+
+
 def new_prediction_history_rows(history):
     """Create plot data only from real completed saved-checkpoint predictions."""
     rows = []
@@ -1080,6 +1103,17 @@ def new_prediction_history_rows(history):
                     "Ux (mm)": 1000.0 * float(values[0]),
                     "Uy (mm)": 1000.0 * float(values[1]),
                 }
+                row.update(item.get("input_features", {}))
+                row.update(item.get("graph_features", {}))
+                rows.append(row)
+        if set(item["results"]) == set(models):
+            average = all_model_average(item["results"], sorted(models))
+            for fold, values in average["by_fold_m"].items():
+                row = {"Run": item["run"],
+                       "Source simulation": item["source_simulation"],
+                       "Model": "All-model average", "Fold": fold,
+                       "Ux (mm)": 1000.0 * float(values[0]),
+                       "Uy (mm)": 1000.0 * float(values[1])}
                 row.update(item.get("input_features", {}))
                 row.update(item.get("graph_features", {}))
                 rows.append(row)
@@ -1106,7 +1140,7 @@ def new_prediction_trend(data, feature, direction, model_filter, fold_filter,
             marker={
                 "symbol": fold_symbols.get(fold_number, "circle"),
                 "size": 8 + 2 * fold_number,
-                "color": CASE_STUDY_COLORS.get(model_name, "#333333"),
+                "color": "#111111" if model_name == "All-model average" else CASE_STUDY_COLORS.get(model_name, "#333333"),
                 "line": {"color": "#222222", "width": 0.6},
             },
             customdata=part[["Run", "Source simulation"]].astype(str).to_numpy(),
@@ -1202,9 +1236,8 @@ with tab_new_prediction:
                     "Incidence angle (degrees)", prefix)
 
             st.markdown("### Generate features and predict displacement")
-            active_models = st.multiselect(
-                "Trained ML models", sorted(models), default=["mlp"],
-                key="new_case_models_select")
+            active_models = sorted(models)
+            st.caption(f"Using all {len(active_models)} trained ML models for the overall average.")
             active_folds = st.selectbox(
                 "Folds to predict",
                 ["5-fold ensemble", "fold_1", "fold_2", "fold_3", "fold_4", "fold_5"],
@@ -1257,8 +1290,22 @@ with tab_new_prediction:
                                 "Fold SD Ux (mm)": 1000.0 * result["fold_std_m"][0],
                                 "Fold SD Uy (mm)": 1000.0 * result["fold_std_m"][1],
                             })
+                        combined = all_model_average(case_results, active_models)
+                        avg_ux, avg_uy = combined["mean_m"]
+                        st.markdown("#### Average prediction across all ML models")
+                        kx, ky = st.columns(2)
+                        kx.metric("All-model average |Ux| (mm)", f"{1000 * avg_ux:.4f}")
+                        ky.metric("All-model average |Uy| (mm)", f"{1000 * avg_uy:.4f}")
+                        preview.append({
+                            "Model": "All-model average",
+                            "Ux (mm)": 1000 * avg_ux, "Uy (mm)": 1000 * avg_uy,
+                            "Fold SD Ux (mm)": np.nan, "Fold SD Uy (mm)": np.nan,
+                        })
                         st.dataframe(pd.DataFrame(preview), hide_index=True,
                                      use_container_width=True)
+                        st.caption("Each of the seven trained model types receives equal weight. "
+                                   "For a five-fold ensemble, each model is averaged over its "
+                                   "five folds first. This is not a calibrated confidence interval.")
                     except Exception as exc:
                         st.error(f"New-case prediction failed: {type(exc).__name__}: {exc}")
 
