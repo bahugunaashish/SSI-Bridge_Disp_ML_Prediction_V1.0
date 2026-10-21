@@ -534,14 +534,13 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
               "test": "square-open"}
     # Consistent dataset colors across every fold and every ML model.
     colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
-    # Stack folds vertically so enlarged labels and individual legends never
-    # encroach on an adjacent fold's plotting area.
-    ncols = 1
-    nrows = len(fold_order)
+    # Compact, print-friendly two-column layout (up to 5 fold panels).
+    ncols = min(2, len(fold_order))
+    nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        horizontal_spacing=0.0,
-        vertical_spacing=0.065 if nrows > 1 else 0.0,
+        horizontal_spacing=0.17 if ncols == 2 else 0.0,
+        vertical_spacing=0.12 if nrows > 1 else 0.0,
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
     global_values = []
@@ -576,8 +575,8 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                     "<br>Predicted %{y:.4f} mm<extra></extra>"
                 ),
             ), row=row, col=col)
-        fig.update_xaxes(title_text=f"Actual peak |{direction}| (mm)", row=row, col=col)
-        fig.update_yaxes(title_text=f"Predicted peak |{direction}| (mm)", row=row, col=col)
+        fig.update_xaxes(title_text=f"Actual |{direction}| (mm)", row=row, col=col)
+        fig.update_yaxes(title_text=f"Predicted |{direction}| (mm)", row=row, col=col)
     if global_values:
         lo, hi = min(global_values), max(global_values)
         pad = max((hi - lo) * 0.04, 0.05)
@@ -604,19 +603,19 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
         showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
         ticks="outside", ticklen=6, zeroline=False,
-        tickfont={"family": "Courier New, Courier, monospace", "size": 17, "color": "#000000"},
-        title_font={"family": "Courier New, Courier, monospace", "size": 18, "color": "#000000"},
+        tickfont={"family": "Courier New, Courier, monospace", "size": 19, "color": "#000000"},
+        title_font={"family": "Courier New, Courier, monospace", "size": 19, "color": "#000000"},
         automargin=True,
     )
     fig.update_xaxes(**axis_style)
     fig.update_yaxes(**axis_style)
     fig.update_layout(
-        template="plotly_white", height=max(620, nrows * 510 + 110),
+        template="plotly_white", width=960, height=155 + nrows * 375,
         paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Courier New, Courier, monospace", "size": 18, "color": "#000000"},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
-               "x": 0.40, "font": {"size": 30, "color": "#000000"}},
-        margin={"l": 105, "r": 45, "t": 100, "b": 85},
+               "x": 0.40, "font": {"size": 26, "color": "#000000"}},
+        margin={"l": 105, "r": 40, "t": 95, "b": 80},
         showlegend=False,
         hovermode="closest",
     )
@@ -638,24 +637,27 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         # surrounding figure. It stays inside the top-left of every panel.
         available = set(data.loc[data["fold"].eq(fold), "split"].astype(str))
         legend_lines = [f"<b>Fold {str(fold).replace('fold_', '')}</b>"]
-        for split, color, label in (
-                ("train", "#1565C0", "Training (circle)"),
-                ("validation", "#111111", "Validation (diamond)"),
-                ("test", "#D32F2F", "Testing (square)")):
+        for split, color, marker, label in (
+                ("train", "#1565C0", "○", "Training"),
+                ("validation", "#111111", "◇", "Validation"),
+                ("test", "#D32F2F", "□", "Testing")):
             if split in available:
                 legend_lines.append(
-                    f'<span style="color:{color}">{label}</span>')
-        legend_lines.append("Ideal (1:1) - dashed")
+                    f'<span style="color:{color}">{marker}</span> '
+                    f'<span style="color:#000000">{label}</span>')
+        legend_lines.append(
+            '<span style="color:#555555">┄┄</span> '
+            '<span style="color:#000000">Ideal (1:1)</span>')
         suffix = "" if panel == 0 else str(panel + 1)
         fig.add_annotation(
-            x=0.025, y=0.975,
+            x=0.02, y=0.98,
             xref=f"x{suffix} domain", yref=f"y{suffix} domain",
             xanchor="left", yanchor="top",
             text="<br>".join(legend_lines), showarrow=False,
             align="left", bgcolor="rgba(255,255,255,0.91)",
             bordercolor="#C6C6C6", borderwidth=1, borderpad=5,
             font={"family": "Courier New, Courier, monospace",
-                  "size": 15, "color": "#000000"},
+                  "size": 17, "color": "#000000"},
         )
     return fig
 
