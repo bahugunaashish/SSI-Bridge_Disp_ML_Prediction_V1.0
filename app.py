@@ -568,7 +568,9 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 ),
             ), row=row, col=col)
         fig.update_xaxes(title_text=f"Actual |{direction}| (mm)", row=row, col=col)
-        fig.update_yaxes(title_text=f"Predicted |{direction}| (mm)", row=row, col=col)
+        fig.update_yaxes(
+            title_text=f"Predicted |{direction}| (mm)" if col == 1 else "",
+            row=row, col=col)
     if global_values:
         lo, hi = min(global_values), max(global_values)
         pad = max((hi - lo) * 0.04, 0.05)
