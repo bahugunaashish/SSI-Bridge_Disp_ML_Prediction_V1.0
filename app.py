@@ -534,12 +534,14 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
               "test": "square-open"}
     # Consistent dataset colors across every fold and every ML model.
     colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
-    ncols = 1 if len(fold_order) == 1 else 2
-    nrows = math.ceil(len(fold_order) / ncols)
+    # Stack folds vertically so enlarged labels and individual legends never
+    # encroach on an adjacent fold's plotting area.
+    ncols = 1
+    nrows = len(fold_order)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        horizontal_spacing=0.12 if ncols == 2 else 0.06,
-        vertical_spacing=min(0.16, 0.24 / nrows),
+        horizontal_spacing=0.0,
+        vertical_spacing=0.065 if nrows > 1 else 0.0,
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
     global_values = []
@@ -564,7 +566,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 legend=legend_name, showlegend=True,
                 marker={
                     "symbol": splits[split], "color": colors.get(split, "#444444"),
-                    "size": 7, "opacity": 0.7,
+                    "size": 10.5, "opacity": 0.7,
                     "line": {"color": colors.get(split, "#444444"), "width": 1.1},
                 },
                 customdata=points.loc[valid, "simulation_id"].astype(str).to_numpy(),
@@ -601,20 +603,20 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     axis_style = dict(
         showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
         showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
-        ticks="outside", ticklen=4, zeroline=False,
-        tickfont={"family": "Courier New, Courier, monospace", "size": 11},
-        title_font={"family": "Courier New, Courier, monospace", "size": 12},
+        ticks="outside", ticklen=6, zeroline=False,
+        tickfont={"family": "Courier New, Courier, monospace", "size": 17, "color": "#000000"},
+        title_font={"family": "Courier New, Courier, monospace", "size": 18, "color": "#000000"},
         automargin=True,
     )
     fig.update_xaxes(**axis_style)
     fig.update_yaxes(**axis_style)
     fig.update_layout(
-        template="plotly_white", height=max(620, nrows * 510 + 110),
+        template="plotly_white", height=nrows * 740 + 150,
         paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Courier New, Courier, monospace", "size": 12},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
-               "x": 0.40, "font": {"size": 20}},
-        margin={"l": 85, "r": 45, "t": 90, "b": 85},
+               "x": 0.40, "font": {"size": 30, "color": "#000000"}},
+        margin={"l": 140, "r": 75, "t": 140, "b": 115},
         hovermode="closest",
     )
     # Constrain each data panel to a square, rather than a stretched rectangle.
@@ -639,14 +641,15 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         legend_id = "legend" if panel == 0 else f"legend{panel + 1}"
         fig.update_layout(**{
             legend_id: {
-                "x": float(xdomain[1]) - 0.012,
+                "x": float(xdomain[0]) + 0.025,
                 "y": float(ydomain[1]) - 0.012,
-                "xanchor": "right", "yanchor": "top",
+                "xanchor": "left", "yanchor": "top",
                 "orientation": "v",
-                "title": {"text": f"Fold {str(fold).replace('fold_', '')}"},
+                "title": {"text": f"Fold {str(fold).replace('fold_', '')}",
+                          "font": {"size": 17, "color": "#000000"}},
                 "bgcolor": "rgba(255,255,255,0.88)",
                 "bordercolor": "#C6C6C6", "borderwidth": 1,
-                "font": {"size": 10},
+                "font": {"size": 15, "color": "#000000"},
             },
         })
     return fig
