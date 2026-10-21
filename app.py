@@ -539,7 +539,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        horizontal_spacing=0.17 if ncols == 2 else 0.0,
+        horizontal_spacing=0.07 if ncols == 2 else 0.0,
         vertical_spacing=0.12 if nrows > 1 else 0.0,
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
@@ -565,7 +565,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 legend=legend_name, showlegend=False,
                 marker={
                     "symbol": splits[split], "color": colors.get(split, "#444444"),
-                    "size": 10.5, "opacity": 0.7,
+                    "size": 7, "opacity": 0.7,
                     "line": {"color": colors.get(split, "#444444"), "width": 1.1},
                 },
                 customdata=points.loc[valid, "simulation_id"].astype(str).to_numpy(),
