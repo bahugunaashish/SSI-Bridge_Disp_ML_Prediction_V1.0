@@ -557,9 +557,11 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
             actual, predicted = actual[valid], predicted[valid]
             global_values.extend((actual.min(), actual.max(), predicted.min(), predicted.max()))
             series_name = f"Fold {str(fold).replace('fold_', '')} / {split.capitalize()}"
+            legend_name = "legend" if panel == 0 else f"legend{panel + 1}"
             fig.add_trace(go.Scattergl(
                 x=actual, y=predicted, mode="markers",
-                name=series_name, legendgroup=series_name, showlegend=True,
+                name=series_name, legendgroup=series_name,
+                legend=legend_name, showlegend=True,
                 marker={
                     "symbol": splits[split], "color": colors.get(split, "#444444"),
                     "size": 7, "opacity": 0.7,
@@ -589,7 +591,9 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 x=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
                 y=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
                 mode="lines", line={"color": "#555555", "dash": "dash", "width": 1.4},
-                showlegend=(panel == 0), legendgroup="ideal", name="Ideal (1:1)",
+                showlegend=True, legendgroup=f"ideal_{panel}",
+                legend="legend" if panel == 0 else f"legend{panel + 1}",
+                name="Ideal (1:1)",
                 hoverinfo="skip",
             ), row=row, col=col)
             fig.update_xaxes(range=list(x_range), row=row, col=col)
@@ -605,19 +609,46 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     fig.update_xaxes(**axis_style)
     fig.update_yaxes(**axis_style)
     fig.update_layout(
-        template="plotly_white", height=max(620, nrows * 450),
+        template="plotly_white", height=max(620, nrows * 510 + 110),
         paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Courier New, Courier, monospace", "size": 12},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
                "x": 0.40, "font": {"size": 20}},
-        legend={"orientation": "v", "x": 0.99, "y": 0.99, "xanchor": "right",
-                "yanchor": "top", "title": {"text": "Fold / dataset"},
-                "bgcolor": "rgba(255,255,255,0.90)",
-                "bordercolor": "#C6C6C6", "borderwidth": 1,
-                "font": {"size": 10}},
         margin={"l": 85, "r": 45, "t": 90, "b": 85},
         hovermode="closest",
     )
+    # Constrain each data panel to a square, rather than a stretched rectangle.
+    # Keep X/Y plotting ranges and fitted diagonal consistent for every fold.
+    plot_limits = (x_range, y_range) if global_values else ((0.0, 1.0), (0.0, 1.0))
+    x_span = max(float(plot_limits[0][1] - plot_limits[0][0]), 1e-12)
+    y_span = max(float(plot_limits[1][1] - plot_limits[1][0]), 1e-12)
+    for panel, fold in enumerate(fold_order):
+        row, col = divmod(panel, ncols)
+        row += 1
+        col += 1
+        xaxis_ref = "x" if panel == 0 else f"x{panel + 1}"
+        fig.update_yaxes(
+            scaleanchor=xaxis_ref, scaleratio=x_span / y_span,
+            constrain="domain", row=row, col=col)
+        fig.update_xaxes(constrain="domain", row=row, col=col)
+        # Plotly supports one legend per subplot via legend, legend2, ... .
+        # Anchor in the matching subplot's paper-relative domain.
+        suffix = "" if panel == 0 else str(panel + 1)
+        xdomain = fig.layout[f"xaxis{suffix}"].domain
+        ydomain = fig.layout[f"yaxis{suffix}"].domain
+        legend_id = "legend" if panel == 0 else f"legend{panel + 1}"
+        fig.update_layout(**{
+            legend_id: {
+                "x": float(xdomain[1]) - 0.012,
+                "y": float(ydomain[1]) - 0.012,
+                "xanchor": "right", "yanchor": "top",
+                "orientation": "v",
+                "title": {"text": f"Fold {str(fold).replace('fold_', '')}"},
+                "bgcolor": "rgba(255,255,255,0.88)",
+                "bordercolor": "#C6C6C6", "borderwidth": 1,
+                "font": {"size": 10},
+            },
+        })
     return fig
 
 
