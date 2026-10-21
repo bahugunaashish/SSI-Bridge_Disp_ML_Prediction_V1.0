@@ -357,6 +357,9 @@ def plot_metrics_radar(metrics: pd.DataFrame, direction: str, distinguish_splits
         split = str(row.get("split", "")).lower()
         line_styles = {"train": "dot", "validation": "dash", "test": "solid"}
         style = line_styles.get(split, "solid") if distinguish_splits else "solid"
+        series_color = ({"train": "#1565C0", "validation": "#111111",
+                         "test": "#D32F2F"}.get(split, "#555555")
+                        if distinguish_splits else colors.get(model, "#555555"))
         values = scores.loc[i, columns].to_numpy(dtype=float)
         if not np.isfinite(values).all():
             continue
@@ -368,7 +371,7 @@ def plot_metrics_radar(metrics: pd.DataFrame, direction: str, distinguish_splits
             name=str(row["Series"]),
             line={"color": colors.get(model, "#555555"), "width": 2.2, "dash": style},
             marker={"symbol": symbols.get(model, "circle-open"), "size": 8,
-                    "color": colors.get(model, "#555555")},
+                    "color": series_color},
             opacity=0.8,
             hovertemplate="%{theta}<br>Relative score: %{r:.3f}<extra>%{fullData.name}</extra>",
         ))
@@ -529,12 +532,8 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     import math
     splits = {"train": "circle-open", "validation": "diamond-open",
               "test": "square-open"}
-    colors = {
-        "gnn_tcn": "#1565C0", "gpr": "#C62828",
-        "graph_operator": "#2E7D32", "graph_transformer": "#7B1FA2",
-        "meshgraphnet": "#E65100", "mlp": "#00838F",
-        "tcn_lstm": "#5D4037",
-    }
+    # Consistent dataset colors across every fold and every ML model.
+    colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
     ncols = 1 if len(fold_order) == 1 else 2
     nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
@@ -566,9 +565,9 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 x=actual, y=predicted, mode="markers",
                 name=series_name, legendgroup=series_name, showlegend=show_legend,
                 marker={
-                    "symbol": splits[split], "color": colors.get(model, "#444444"),
+                    "symbol": splits[split], "color": colors.get(split, "#444444"),
                     "size": 7, "opacity": 0.7,
-                    "line": {"color": colors.get(model, "#444444"), "width": 1.1},
+                    "line": {"color": colors.get(split, "#444444"), "width": 1.1},
                 },
                 customdata=points.loc[valid, "simulation_id"].astype(str).to_numpy(),
                 hovertemplate=(
@@ -704,9 +703,9 @@ with tab_overfit:
                                 "One subplot per selected fold, containing all selected ML "
                                 "models and training/validation/testing datasets. "
                                 "You can show 1–5 folds using the fold selector above.")
-                            st.caption("Scatter marker shapes: training = ○ circle, "
-                                       "validation = ◇ diamond, testing = □ square. "
-                                       "Marker colors distinguish ML models; the legend "
+                            st.caption("Training: blue ○ circle; validation: black ◇ diamond; "
+                                       "testing: red □ square. Colors and shapes identify datasets "
+                                       "consistently across all ML models and folds. The legend "
                                        "identifies each model/dataset. "
                                        "RMSE, R², MAPE, and Error SD are in the tables below.")
                             custom_ranges = overfit_axis_controls(direction)
@@ -728,8 +727,9 @@ with tab_overfit:
                                 radar_input["Series"] = (radar_input["model"] +
                                                          " / " + radar_input["split"])
                                 st.markdown("**Four-metric spider plot (relative 0–1 scores)**")
-                                st.caption("Higher relative scores are better. Each model keeps its own marker "
-                                           "and color; training: dotted, validation: dashed, test: solid. "
+                                st.caption("Higher relative scores are better. Training: blue/dotted; "
+                                           "validation: black/dashed; testing: red/solid. "
+                                           "Model marker shapes remain distinct. "
                                            "Actual metrics are in the tables above.")
                                 st.plotly_chart(
                                     plot_metrics_radar(radar_input, direction, distinguish_splits=True),
