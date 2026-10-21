@@ -538,13 +538,11 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        subplot_titles=[f"Fold {str(f).replace('fold_', '')}" for f in fold_order],
         horizontal_spacing=0.12 if ncols == 2 else 0.06,
         vertical_spacing=min(0.16, 0.24 / nrows),
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
     global_values = []
-    seen_legend = set()
     for panel, fold in enumerate(fold_order):
         row, col = divmod(panel, ncols)
         row += 1
@@ -558,12 +556,10 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 continue
             actual, predicted = actual[valid], predicted[valid]
             global_values.extend((actual.min(), actual.max(), predicted.min(), predicted.max()))
-            series_name = f"{model} / {split}"
-            show_legend = series_name not in seen_legend
-            seen_legend.add(series_name)
+            series_name = f"Fold {str(fold).replace('fold_', '')} / {split.capitalize()}"
             fig.add_trace(go.Scattergl(
                 x=actual, y=predicted, mode="markers",
-                name=series_name, legendgroup=series_name, showlegend=show_legend,
+                name=series_name, legendgroup=series_name, showlegend=True,
                 marker={
                     "symbol": splits[split], "color": colors.get(split, "#444444"),
                     "size": 7, "opacity": 0.7,
@@ -614,10 +610,12 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         font={"family": "Courier New, Courier, monospace", "size": 12},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
                "x": 0.40, "font": {"size": 20}},
-        legend={"orientation": "v", "x": 1.01, "y": 1, "xanchor": "left",
-                "yanchor": "top", "title": {"text": "Model / dataset"},
-                "font": {"size": 11}},
-        margin={"l": 85, "r": 275, "t": 100, "b": 85},
+        legend={"orientation": "v", "x": 0.99, "y": 0.99, "xanchor": "right",
+                "yanchor": "top", "title": {"text": "Fold / dataset"},
+                "bgcolor": "rgba(255,255,255,0.90)",
+                "bordercolor": "#C6C6C6", "borderwidth": 1,
+                "font": {"size": 10}},
+        margin={"l": 85, "r": 45, "t": 90, "b": 85},
         hovermode="closest",
     )
     return fig
