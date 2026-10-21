@@ -4,6 +4,7 @@ import io
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import tempfile
 from pathlib import Path
 
@@ -523,6 +524,106 @@ def overfit_metrics_table(data, direction, group_columns):
     return pd.DataFrame(rows)
 
 
+def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
+    """One actual-vs-predicted panel per selected fold; all models/splits in each."""
+    import math
+    splits = {"train": "circle-open", "validation": "diamond-open",
+              "test": "square-open"}
+    colors = {
+        "gnn_tcn": "#1565C0", "gpr": "#C62828",
+        "graph_operator": "#2E7D32", "graph_transformer": "#7B1FA2",
+        "meshgraphnet": "#E65100", "mlp": "#00838F",
+        "tcn_lstm": "#5D4037",
+    }
+    ncols = 1 if len(fold_order) == 1 else 2
+    nrows = math.ceil(len(fold_order) / ncols)
+    fig = make_subplots(
+        rows=nrows, cols=ncols,
+        subplot_titles=[f"Fold {str(f).replace('fold_', '')}" for f in fold_order],
+        horizontal_spacing=0.12 if ncols == 2 else 0.06,
+        vertical_spacing=min(0.16, 0.24 / nrows),
+    )
+    xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
+    global_values = []
+    seen_legend = set()
+    for panel, fold in enumerate(fold_order):
+        row, col = divmod(panel, ncols)
+        row += 1
+        col += 1
+        portion = data.loc[data["fold"].eq(fold)]
+        for (model, split), points in portion.groupby(["model", "split"], sort=True):
+            actual = zero_small_displacements(points[xcol].to_numpy(dtype=float))
+            predicted = zero_small_displacements(points[ycol].to_numpy(dtype=float))
+            valid = np.isfinite(actual) & np.isfinite(predicted)
+            if not valid.any():
+                continue
+            actual, predicted = actual[valid], predicted[valid]
+            global_values.extend((actual.min(), actual.max(), predicted.min(), predicted.max()))
+            series_name = f"{model} / {split}"
+            show_legend = series_name not in seen_legend
+            seen_legend.add(series_name)
+            fig.add_trace(go.Scattergl(
+                x=actual, y=predicted, mode="markers",
+                name=series_name, legendgroup=series_name, showlegend=show_legend,
+                marker={
+                    "symbol": splits[split], "color": colors.get(model, "#444444"),
+                    "size": 7, "opacity": 0.7,
+                    "line": {"color": colors.get(model, "#444444"), "width": 1.1},
+                },
+                customdata=points.loc[valid, "simulation_id"].astype(str).to_numpy(),
+                hovertemplate=(
+                    f"Fold {fold}<br>{model} / {split}<br>"
+                    "Case %{customdata}<br>Actual %{x:.4f} mm"
+                    "<br>Predicted %{y:.4f} mm<extra></extra>"
+                ),
+            ), row=row, col=col)
+        fig.update_xaxes(title_text=f"Actual peak |{direction}| (mm)", row=row, col=col)
+        fig.update_yaxes(title_text=f"Predicted peak |{direction}| (mm)", row=row, col=col)
+    if global_values:
+        lo, hi = min(global_values), max(global_values)
+        pad = max((hi - lo) * 0.04, 0.05)
+        default_range = (min(0., lo - pad), hi + pad)
+        if default_range[1] <= default_range[0]:
+            default_range = (default_range[0], default_range[0] + 1.)
+        x_range, y_range = (default_range, default_range) if axis_ranges is None else axis_ranges
+        for panel, fold in enumerate(fold_order):
+            row, col = divmod(panel, ncols)
+            row += 1
+            col += 1
+            fig.add_trace(go.Scatter(
+                x=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
+                y=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
+                mode="lines", line={"color": "#555555", "dash": "dash", "width": 1.4},
+                showlegend=(panel == 0), legendgroup="ideal", name="Ideal (1:1)",
+                hoverinfo="skip",
+            ), row=row, col=col)
+            fig.update_xaxes(range=list(x_range), row=row, col=col)
+            fig.update_yaxes(range=list(y_range), row=row, col=col)
+    axis_style = dict(
+        showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
+        showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
+        ticks="outside", ticklen=4, zeroline=False,
+        tickfont={"family": "Courier New, Courier, monospace", "size": 11},
+        title_font={"family": "Courier New, Courier, monospace", "size": 12},
+        automargin=True,
+    )
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
+    fig.update_layout(
+        template="plotly_white", height=max(620, nrows * 450),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font={"family": "Courier New, Courier, monospace", "size": 12},
+        title={"text": f"Peak |{direction}| — individual cross-validation folds",
+               "x": 0.40, "font": {"size": 20}},
+        legend={"orientation": "v", "x": 1.01, "y": 1, "xanchor": "left",
+                "yanchor": "top", "title": {"text": "Model / dataset"},
+                "font": {"size": 11}},
+        margin={"l": 85, "r": 275, "t": 100, "b": 85},
+        hovermode="closest",
+    )
+    return fig
+
+
 def overfit_plot_data(data, fold_detail):
     """Build trace labels without ever averaging across train/validation/test."""
     result = data.copy()
@@ -585,9 +686,7 @@ with tab_overfit:
                     ["train", "validation", "test"],
                     default=["train", "validation", "test"],
                     key="overfit_splits")
-                fold_detail = st.checkbox(
-                    "Show each selected fold separately in scatter plots",
-                    value=False, key="overfit_fold_detail")
+                st.caption("Each selected fold appears in its own subplot. Remove or add folds using the fold selector above.")
                 if not chosen_models or not chosen_folds or not selected_splits:
                     st.info("Select at least one model, fold, and dataset.")
                 else:
@@ -596,25 +695,24 @@ with tab_overfit:
                         & of["fold"].isin(chosen_folds)
                         & of["split"].isin(selected_splits)
                     ].copy()
-                    scatter_data = overfit_plot_data(selected, fold_detail)
                     ux_view, uy_view = st.tabs(["Training / validation / test — Ux",
                                                 "Training / validation / test — Uy"])
                     for direction, area in [("Ux", ux_view), ("Uy", uy_view)]:
                         with area:
                             st.markdown(f"### Peak |{direction}| performance")
-                            st.caption("Each scatter series represents one model/dataset"
-                                       + ("/fold." if fold_detail else "; points across selected folds are pooled."))
+                            st.caption(
+                                "One subplot per selected fold, containing all selected ML "
+                                "models and training/validation/testing datasets. "
+                                "You can show 1–5 folds using the fold selector above.")
                             st.caption("Scatter marker shapes: training = ○ circle, "
                                        "validation = ◇ diamond, testing = □ square. "
                                        "Marker colors distinguish ML models; the legend "
-                                       "identifies each model/dataset and its RMSE (mm). "
-                                       "R², MAPE, and Error SD are in the tables below.")
+                                       "identifies each model/dataset. "
+                                       "RMSE, R², MAPE, and Error SD are in the tables below.")
                             custom_ranges = overfit_axis_controls(direction)
-                            plot, _ = plot_comparison(
-                                scatter_data, direction,
-                                f"Peak |{direction}| — training vs. validation vs. test",
-                                axis_ranges=custom_ranges, legend_rmse=True,
-                                distinguish_splits=True)
+                            plot = overfit_fold_subplots(
+                                selected, direction, chosen_folds,
+                                axis_ranges=custom_ranges)
                             st.plotly_chart(plot, use_container_width=True,
                                             key=f"overfit_plot_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
