@@ -685,7 +685,7 @@ with tab_overfit:
                     ["train", "validation", "test"],
                     default=["train", "validation", "test"],
                     key="overfit_splits")
-                st.caption("Each selected fold appears in its own subplot. Remove or add folds using the fold selector above.")
+                st.caption("Each selected model has its own expandable plot containing separate fold subplots. Use these selectors to hide or restore models, folds, and datasets.")
                 if not chosen_models or not chosen_folds or not selected_splits:
                     st.info("Select at least one model, fold, and dataset.")
                 else:
@@ -700,20 +700,40 @@ with tab_overfit:
                         with area:
                             st.markdown(f"### Peak |{direction}| performance")
                             st.caption(
-                                "One subplot per selected fold, containing all selected ML "
-                                "models and training/validation/testing datasets. "
-                                "You can show 1–5 folds using the fold selector above.")
+                                "One independent plot per selected ML model, with a "
+                                "separate subplot for every selected fold (up to five). "
+                                "Use the model/fold selectors above to add or remove "
+                                "plots and fold panels.")
                             st.caption("Training: blue ○ circle; validation: black ◇ diamond; "
                                        "testing: red □ square. Colors and shapes identify datasets "
                                        "consistently across all ML models and folds. The legend "
                                        "identifies each model/dataset. "
                                        "RMSE, R², MAPE, and Error SD are in the tables below.")
                             custom_ranges = overfit_axis_controls(direction)
-                            plot = overfit_fold_subplots(
-                                selected, direction, chosen_folds,
-                                axis_ranges=custom_ranges)
-                            st.plotly_chart(plot, use_container_width=True,
-                                            key=f"overfit_plot_{direction}")
+                            for model_name in chosen_models:
+                                model_rows = selected.loc[selected["model"].eq(model_name)]
+                                if model_rows.empty:
+                                    continue
+                                with st.expander(
+                                        f"{model_name} — {direction} | selected fold panels",
+                                        expanded=True):
+                                    st.caption(
+                                        f"Showing {len(chosen_folds)} fold subplot(s) "
+                                        "with the selected training/validation/testing "
+                                        "datasets for this model only.")
+                                    plot = overfit_fold_subplots(
+                                        model_rows, direction, chosen_folds,
+                                        axis_ranges=custom_ranges)
+                                    plot.update_layout(
+                                        title={
+                                            "text": f"{model_name} — peak |{direction}| "
+                                                    "by cross-validation fold",
+                                            "x": 0.40,
+                                            "font": {"size": 20},
+                                        })
+                                    st.plotly_chart(
+                                        plot, use_container_width=True,
+                                        key=f"overfit_plot_{direction}_{model_name}")
                             st.markdown("**Metrics per model, fold, and dataset**")
                             per_fold = overfit_metrics_table(
                                 selected, direction, ["model", "fold", "split"])
