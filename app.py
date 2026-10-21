@@ -570,6 +570,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         fig.update_xaxes(title_text=f"Actual |{direction}| (mm)", row=row, col=col)
         fig.update_yaxes(
             title_text=f"Predicted |{direction}| (mm)" if col == 1 else "",
+            showticklabels=(col == 1),
             row=row, col=col)
     if global_values:
         lo, hi = min(global_values), max(global_values)
@@ -604,7 +605,8 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     axis_style = dict(
         showgrid=True, gridcolor="#C6C6C6", griddash="dash", gridwidth=1,
         showline=True, mirror=True, linecolor="#222222", linewidth=1.2,
-        ticks="outside", ticklen=6, zeroline=False,
+        ticks="outside", ticklen=7, tickwidth=1.5, tickcolor="#000000",
+        zeroline=False,
         tickfont={"family": "Courier New, Courier, monospace", "size": 19, "color": "#000000"},
         title_font={"family": "Courier New, Courier, monospace", "size": 19, "color": "#000000"},
         automargin=True,
