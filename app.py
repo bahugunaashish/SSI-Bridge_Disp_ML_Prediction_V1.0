@@ -539,7 +539,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        horizontal_spacing=0.07 if ncols == 2 else 0.0,
+        horizontal_spacing=0.035 if ncols == 2 else 0.0,
         vertical_spacing=0.12 if nrows > 1 else 0.0,
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
