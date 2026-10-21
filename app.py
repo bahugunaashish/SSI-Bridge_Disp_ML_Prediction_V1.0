@@ -478,36 +478,28 @@ OVERFITTING_DRIVE_FILE_ID = "1GwaPgm5lVMobPWNKRhKM3TT9w0AiRyMz"
 
 
 def overfit_axis_controls(direction):
-    """Independent manual X/Y axis controls for the overfitting tab only."""
+    """A single common mm axis range keeps actual and predicted comparable."""
     with st.expander(f"{direction} axis range settings", expanded=False):
         manual = st.checkbox(
-            "Set custom axis ranges (mm)",
+            "Set a common X and Y axis range (mm)",
             key=f"overfit_{direction}_manual_axes")
         if not manual:
-            st.caption("Automatic range with equal X and Y scales.")
+            st.caption("Automatic: both axes use identical bounds and unit scale.")
             return None
-        xcol, ycol = st.columns(2)
-        with xcol:
-            st.markdown("**X axis — actual (mm)**")
-            xmin = st.number_input(
-                "Minimum X", value=0.0, step=0.5, format="%.4f",
-                key=f"overfit_{direction}_xmin")
-            xmax = st.number_input(
-                "Maximum X", value=20.0, step=0.5, format="%.4f",
-                key=f"overfit_{direction}_xmax")
-        with ycol:
-            st.markdown("**Y axis — predicted (mm)**")
-            ymin = st.number_input(
-                "Minimum Y", value=0.0, step=0.5, format="%.4f",
-                key=f"overfit_{direction}_ymin")
-            ymax = st.number_input(
-                "Maximum Y", value=20.0, step=0.5, format="%.4f",
-                key=f"overfit_{direction}_ymax")
-        if xmin >= xmax or ymin >= ymax:
-            st.error("Axis maximum must exceed its minimum.")
-            st.stop()
-        st.caption("Axis limits only change the view; they do not alter performance metrics.")
-        return ((xmin, xmax), (ymin, ymax))
+        left, right = st.columns(2)
+        with left:
+            lower = st.number_input(
+                "Minimum for both axes", value=0.0, step=0.5,
+                format="%.4f", key=f"overfit_{direction}_common_min")
+        with right:
+            upper = st.number_input(
+                "Maximum for both axes", value=20.0, step=0.5,
+                format="%.4f", key=f"overfit_{direction}_common_max")
+        if lower >= upper:
+            st.error("Maximum must exceed minimum.")
+            return None
+        st.caption("The same numerical limits apply to X and Y. Metrics are unaffected.")
+        return ((lower, upper), (lower, upper))
 
 
 def overfit_metrics_table(data, direction, group_columns):
@@ -534,13 +526,13 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
               "test": "square-open"}
     # Consistent dataset colors across every fold and every ML model.
     colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
-    # Compact, print-friendly two-column layout (up to 5 fold panels).
-    ncols = min(2, len(fold_order))
+    # Three-column fold layout for compact side-by-side comparison.
+    ncols = min(3, len(fold_order))
     nrows = math.ceil(len(fold_order) / ncols)
     fig = make_subplots(
         rows=nrows, cols=ncols,
-        horizontal_spacing=0.035 if ncols == 2 else 0.0,
-        vertical_spacing=0.12 if nrows > 1 else 0.0,
+        horizontal_spacing=0.06 if ncols > 1 else 0.0,
+        vertical_spacing=0.17 if nrows > 1 else 0.0,
     )
     xcol, ycol = f"actual_{direction}_mm", f"predicted_{direction}_mm"
     global_values = []
@@ -583,14 +575,22 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
         default_range = (min(0., lo - pad), hi + pad)
         if default_range[1] <= default_range[0]:
             default_range = (default_range[0], default_range[0] + 1.)
-        x_range, y_range = (default_range, default_range) if axis_ranges is None else axis_ranges
+        # Every fold receives identical actual/predicted bounds.
+        if axis_ranges is None:
+            common_range = default_range
+        else:
+            common_range = (
+                min(float(axis_ranges[0][0]), float(axis_ranges[1][0])),
+                max(float(axis_ranges[0][1]), float(axis_ranges[1][1])),
+            )
+        x_range = y_range = common_range
         for panel, fold in enumerate(fold_order):
             row, col = divmod(panel, ncols)
             row += 1
             col += 1
             fig.add_trace(go.Scatter(
-                x=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
-                y=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
+                x=[common_range[0], common_range[1]],
+                y=[common_range[0], common_range[1]],
                 mode="lines", line={"color": "#555555", "dash": "dash", "width": 1.4},
                 showlegend=False, legendgroup=f"ideal_{panel}",
                 legend="legend" if panel == 0 else f"legend{panel + 1}",
@@ -610,7 +610,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     fig.update_xaxes(**axis_style)
     fig.update_yaxes(**axis_style)
     fig.update_layout(
-        template="plotly_white", width=960, height=155 + nrows * 375,
+        template="plotly_white", width=1260, height=155 + nrows * 455,
         paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Courier New, Courier, monospace", "size": 18, "color": "#000000"},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
@@ -621,16 +621,13 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     )
     # Constrain each data panel to a square, rather than a stretched rectangle.
     # Keep X/Y plotting ranges and fitted diagonal consistent for every fold.
-    plot_limits = (x_range, y_range) if global_values else ((0.0, 1.0), (0.0, 1.0))
-    x_span = max(float(plot_limits[0][1] - plot_limits[0][0]), 1e-12)
-    y_span = max(float(plot_limits[1][1] - plot_limits[1][0]), 1e-12)
     for panel, fold in enumerate(fold_order):
         row, col = divmod(panel, ncols)
         row += 1
         col += 1
         xaxis_ref = "x" if panel == 0 else f"x{panel + 1}"
         fig.update_yaxes(
-            scaleanchor=xaxis_ref, scaleratio=x_span / y_span,
+            scaleanchor=xaxis_ref, scaleratio=1,
             constrain="domain", row=row, col=col)
         fig.update_xaxes(constrain="domain", row=row, col=col)
         # Legend-like annotation uses the actual subplot axes, not the
