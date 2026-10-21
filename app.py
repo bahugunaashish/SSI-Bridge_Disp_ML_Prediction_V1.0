@@ -563,7 +563,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
             fig.add_trace(go.Scattergl(
                 x=actual, y=predicted, mode="markers",
                 name=series_name, legendgroup=series_name,
-                legend=legend_name, showlegend=True,
+                legend=legend_name, showlegend=False,
                 marker={
                     "symbol": splits[split], "color": colors.get(split, "#444444"),
                     "size": 10.5, "opacity": 0.7,
@@ -593,7 +593,7 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
                 x=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
                 y=[min(x_range[0], y_range[0]), max(x_range[1], y_range[1])],
                 mode="lines", line={"color": "#555555", "dash": "dash", "width": 1.4},
-                showlegend=True, legendgroup=f"ideal_{panel}",
+                showlegend=False, legendgroup=f"ideal_{panel}",
                 legend="legend" if panel == 0 else f"legend{panel + 1}",
                 name="Ideal (1:1)",
                 hoverinfo="skip",
@@ -611,12 +611,13 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     fig.update_xaxes(**axis_style)
     fig.update_yaxes(**axis_style)
     fig.update_layout(
-        template="plotly_white", height=nrows * 740 + 150,
+        template="plotly_white", height=max(620, nrows * 510 + 110),
         paper_bgcolor="white", plot_bgcolor="white",
-        font={"family": "Courier New, Courier, monospace", "size": 12},
+        font={"family": "Courier New, Courier, monospace", "size": 18, "color": "#000000"},
         title={"text": f"Peak |{direction}| — individual cross-validation folds",
                "x": 0.40, "font": {"size": 30, "color": "#000000"}},
-        margin={"l": 140, "r": 75, "t": 140, "b": 115},
+        margin={"l": 105, "r": 45, "t": 100, "b": 85},
+        showlegend=False,
         hovermode="closest",
     )
     # Constrain each data panel to a square, rather than a stretched rectangle.
@@ -633,25 +634,29 @@ def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
             scaleanchor=xaxis_ref, scaleratio=x_span / y_span,
             constrain="domain", row=row, col=col)
         fig.update_xaxes(constrain="domain", row=row, col=col)
-        # Plotly supports one legend per subplot via legend, legend2, ... .
-        # Anchor in the matching subplot's paper-relative domain.
+        # Legend-like annotation uses the actual subplot axes, not the
+        # surrounding figure. It stays inside the top-left of every panel.
+        available = set(data.loc[data["fold"].eq(fold), "split"].astype(str))
+        legend_lines = [f"<b>Fold {str(fold).replace('fold_', '')}</b>"]
+        for split, color, label in (
+                ("train", "#1565C0", "Training (circle)"),
+                ("validation", "#111111", "Validation (diamond)"),
+                ("test", "#D32F2F", "Testing (square)")):
+            if split in available:
+                legend_lines.append(
+                    f'<span style="color:{color}">{label}</span>')
+        legend_lines.append("Ideal (1:1) - dashed")
         suffix = "" if panel == 0 else str(panel + 1)
-        xdomain = fig.layout[f"xaxis{suffix}"].domain
-        ydomain = fig.layout[f"yaxis{suffix}"].domain
-        legend_id = "legend" if panel == 0 else f"legend{panel + 1}"
-        fig.update_layout(**{
-            legend_id: {
-                "x": float(xdomain[0]) + 0.025,
-                "y": float(ydomain[1]) - 0.012,
-                "xanchor": "left", "yanchor": "top",
-                "orientation": "v",
-                "title": {"text": f"Fold {str(fold).replace('fold_', '')}",
-                          "font": {"size": 17, "color": "#000000"}},
-                "bgcolor": "rgba(255,255,255,0.88)",
-                "bordercolor": "#C6C6C6", "borderwidth": 1,
-                "font": {"size": 15, "color": "#000000"},
-            },
-        })
+        fig.add_annotation(
+            x=0.025, y=0.975,
+            xref=f"x{suffix} domain", yref=f"y{suffix} domain",
+            xanchor="left", yanchor="top",
+            text="<br>".join(legend_lines), showarrow=False,
+            align="left", bgcolor="rgba(255,255,255,0.91)",
+            bordercolor="#C6C6C6", borderwidth=1, borderpad=5,
+            font={"family": "Courier New, Courier, monospace",
+                  "size": 15, "color": "#000000"},
+        )
     return fig
 
 
