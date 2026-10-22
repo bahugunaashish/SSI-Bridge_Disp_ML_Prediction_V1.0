@@ -637,6 +637,165 @@ def overfit_ape_fold_histograms(errors, model, direction, folds, datasets,
     return figure
 
 
+def overfit_gain_data(data, direction, models, folds, splits, baseline):
+    """Compute paired gains by fold and dataset; never reuse test data to fit baseline."""
+    actual_col = f"actual_{direction}_mm"
+    pred_col = f"predicted_{direction}_mm"
+    groups = {
+        (model, fold, split): group
+        for (model, fold, split), group in data.groupby(["model", "fold", "split"])
+    }
+
+    def scores(actual, predicted):
+        actual = zero_small_displacements(actual)
+        predicted = zero_small_displacements(predicted)
+        error = predicted - actual
+        ss = np.sum((actual - actual.mean()) ** 2)
+        valid = actual != 0
+        return {
+            "RMSE": float(np.sqrt(np.mean(error ** 2))),
+            "MAE": float(np.mean(np.abs(error))),
+            "R²": float(1 - np.sum(error ** 2) / ss) if ss > 0 else np.nan,
+            "MAPE": float(100 * np.mean(np.abs(error[valid] / actual[valid])))
+                    if valid.any() else np.nan,
+        }
+
+    records = []
+    for model in models:
+        for fold in folds:
+            for split in splits:
+                candidate = groups.get((model, fold, split))
+                if candidate is None:
+                    continue
+                candidate = candidate[["simulation_id", actual_col, pred_col]].copy()
+                if baseline == "Training-mean predictor":
+                    training = groups.get((model, fold, "train"))
+                    if training is None:
+                        continue
+                    reference_actual = pd.to_numeric(
+                        training[actual_col], errors="coerce").to_numpy(dtype=float)
+                    reference_actual = reference_actual[np.isfinite(reference_actual)]
+                    if not len(reference_actual):
+                        continue
+                    baseline_value = float(
+                        np.mean(zero_small_displacements(reference_actual)))
+                    for key in (actual_col, pred_col):
+                        candidate[key] = pd.to_numeric(candidate[key], errors="coerce")
+                    candidate = candidate.loc[
+                        np.isfinite(candidate[[actual_col, pred_col]]).all(axis=1)]
+                    reference = np.full(len(candidate), baseline_value, dtype=float)
+                else:
+                    baseline_model = baseline.removeprefix("Model: ")
+                    ref = groups.get((baseline_model, fold, split))
+                    if ref is None:
+                        continue
+                    ref = ref[["simulation_id", actual_col, pred_col]].rename(
+                        columns={actual_col: "_base_actual", pred_col: "_base_pred"})
+                    candidate = candidate.merge(ref, on="simulation_id",
+                                                validate="one_to_one")
+                    for key in (actual_col, pred_col, "_base_actual", "_base_pred"):
+                        candidate[key] = pd.to_numeric(candidate[key], errors="coerce")
+                    candidate = candidate.loc[
+                        np.isfinite(candidate[
+                            [actual_col, pred_col, "_base_actual", "_base_pred"]
+                        ]).all(axis=1)]
+                    candidate = candidate.loc[
+                        np.isclose(candidate[actual_col],
+                                   candidate["_base_actual"], rtol=1e-7, atol=1e-8)]
+                    reference = candidate["_base_pred"].to_numpy(dtype=float)
+                if candidate.empty:
+                    continue
+                actual = candidate[actual_col].to_numpy(dtype=float)
+                estimated = candidate[pred_col].to_numpy(dtype=float)
+                current_scores = scores(actual, estimated)
+                baseline_scores = scores(actual, reference)
+                for metric in ("RMSE", "MAE", "R²", "MAPE"):
+                    value = current_scores[metric]
+                    base = baseline_scores[metric]
+                    if metric == "R²":
+                        gain = value - base
+                    else:
+                        gain = 100 * (base - value) / base if np.isfinite(base) and base > 0 else np.nan
+                    records.append({
+                        "model": model, "fold": fold, "split": split,
+                        "metric": metric, "gain": gain,
+                        "model_metric": value, "baseline_metric": base,
+                        "matched_cases": len(candidate),
+                    })
+    return pd.DataFrame(records)
+
+
+def overfit_gain_plot(frame, direction, models, splits, baseline):
+    """Mean +/- sample SD over folds; positive is improvement for all metrics."""
+    metrics = [("RMSE", "RMSE reduction (%)"),
+               ("MAE", "MAE reduction (%)"),
+               ("R²", "R² increase"),
+               ("MAPE", "MAPE reduction (%)")]
+    fig = make_subplots(rows=2, cols=2, horizontal_spacing=0.17,
+                        vertical_spacing=0.25)
+    colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
+    names = {"train": "Training", "validation": "Validation", "test": "Testing"}
+    symbols = {"train": "circle", "validation": "diamond-open", "test": "square-open"}
+    shifts = {"train": -0.22, "validation": 0.0, "test": 0.22}
+    for panel, (metric, label) in enumerate(metrics):
+        row, col = divmod(panel, 2)
+        row += 1
+        col += 1
+        chunk = frame.loc[(frame["metric"] == metric) & np.isfinite(frame["gain"])]
+        for split in ("train", "validation", "test"):
+            if split not in splits:
+                continue
+            xs, ys, sd, hover = [], [], [], []
+            for i, model in enumerate(models):
+                vals = chunk.loc[
+                    (chunk["model"] == model) & (chunk["split"] == split)]
+                if vals.empty:
+                    continue
+                means = vals["gain"].to_numpy(dtype=float)
+                xs.append(float(means.mean()))
+                ys.append(i + shifts[split])
+                spread = float(means.std(ddof=1)) if len(means) > 1 else 0.0
+                sd.append(spread)
+                hover.append(f"{model}, {names[split]}<br>Gain: {xs[-1]:+.3f}"
+                             f"<br>Fold SD: {spread:.3f}"
+                             f"<br>Folds: {len(means)}")
+            if xs:
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="markers", name=names[split],
+                    legendgroup=split, showlegend=(panel == 0),
+                    marker={"symbol": symbols[split], "size": 10,
+                            "color": colors[split],
+                            "line": {"color": colors[split], "width": 1}},
+                    error_x={"type": "data", "array": sd, "visible": True,
+                             "color": colors[split], "thickness": 1.5, "width": 4},
+                    customdata=hover, hovertemplate="%{customdata}<extra></extra>",
+                ), row=row, col=col)
+        fig.add_vline(x=0, line_color="#555555", line_dash="dash",
+                      row=row, col=col)
+        fig.update_xaxes(title_text=label, row=row, col=col)
+        fig.update_yaxes(
+            tickmode="array", tickvals=list(range(len(models))),
+            ticktext=models, showticklabels=col == 1,
+            range=[len(models) - 0.6, -0.6], row=row, col=col)
+    font = {"family": "Courier New, Courier, monospace",
+            "size": 13, "color": "#000000"}
+    fig.update_xaxes(showgrid=True, gridcolor="#D0D0D0",
+                     ticks="outside", tickfont=font,
+                     title_font={**font, "size": 16})
+    fig.update_yaxes(showgrid=True, gridcolor="#D0D0D0",
+                     ticks="outside", tickfont=font)
+    fig.update_layout(
+        template="plotly_white", width=1150, height=790,
+        plot_bgcolor="white", paper_bgcolor="white",
+        title={"text": f"Peak |{direction}| — performance gain vs {baseline}",
+               "x": 0.5, "font": {"size": 19, "color": "#000000"}},
+        font=font,
+        legend={"orientation": "h", "x": 0.5, "xanchor": "center",
+                "y": 1.06, "font": font},
+        margin={"l": 135, "r": 45, "t": 110, "b": 80})
+    return fig
+
+
 def overfit_four_metric_fold_summary(data, direction):
     """Fold-wise metric summaries for the four-panel model comparison.
 
@@ -1155,6 +1314,39 @@ with tab_overfit:
                                     file_name=f"ssi_four_metrics_{direction}.csv",
                                     mime="text/csv",
                                     key=f"overfit_four_metrics_export_{direction}")
+                            st.markdown("### Performance gain relative to a baseline")
+                            baseline_choices = ["Training-mean predictor"] + [
+                                f"Model: {m}" for m in sorted(of["model"].unique())
+                            ]
+                            gain_baseline = st.selectbox(
+                                "Baseline for gain analysis", baseline_choices,
+                                key=f"overfit_gain_baseline_{direction}")
+                            st.caption(
+                                "Gain is computed on paired simulation IDs within each "
+                                "fold and dataset. For the training-mean baseline, "
+                                "the constant predictor is fitted from training "
+                                "actuals in the same model/fold only. RMSE, MAE, and "
+                                "MAPE gains are percentage error reductions; R² gain "
+                                "is the absolute increase. Positive values are better. "
+                                "Points show fold means with ± sample SD.")
+                            gain_rows = overfit_gain_data(
+                                of, direction, chosen_models, chosen_folds,
+                                selected_splits, gain_baseline)
+                            if gain_rows.empty or not np.isfinite(gain_rows["gain"]).any():
+                                st.info("No valid matched baseline comparisons for the selection.")
+                            else:
+                                st.plotly_chart(
+                                    overfit_gain_plot(
+                                        gain_rows, direction, chosen_models,
+                                        selected_splits, gain_baseline),
+                                    use_container_width=True,
+                                    key=f"overfit_gain_plot_{direction}")
+                                st.download_button(
+                                    f"Download {direction} fold-wise gain (CSV)",
+                                    gain_rows.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"ssi_gain_{direction}.csv",
+                                    mime="text/csv",
+                                    key=f"overfit_gain_download_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
                             per_fold = overfit_metrics_table(
                                 selected, direction, ["model", "fold", "split"])
