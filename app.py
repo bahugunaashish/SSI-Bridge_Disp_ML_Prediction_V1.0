@@ -519,6 +519,124 @@ def overfit_metrics_table(data, direction, group_columns):
     return pd.DataFrame(rows)
 
 
+def overfit_individual_ape(data, direction):
+    """Per-simulation absolute percentage errors from RAW displacements.
+
+    Unlike the other overfitting plots/metrics, do not round small values to
+    zero at 0.001 mm. Exact-zero actual displacement is still undefined for APE.
+    """
+    columns = ["simulation_id", "model", "fold", "split"]
+    actual = pd.to_numeric(
+        data[f"actual_{direction}_mm"], errors="coerce").to_numpy(dtype=float)
+    predicted = pd.to_numeric(
+        data[f"predicted_{direction}_mm"], errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(actual) & np.isfinite(predicted) & (actual != 0.0)
+    output = data.loc[valid, columns].copy()
+    output["Actual (mm)"] = actual[valid]
+    output["Predicted (mm)"] = predicted[valid]
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        output["APE (%)"] = (
+            100.0 * np.abs(predicted[valid] - actual[valid])
+            / np.abs(actual[valid]))
+    output = output.loc[np.isfinite(output["APE (%)"])].copy()
+    return output
+
+
+def overfit_ape_fold_histograms(errors, model, direction, folds, datasets,
+                                bins=30, normalized=False, common_max=None):
+    """Individual fold panels, each overlaying the selected dataset histograms."""
+    import math
+    ncols = min(3, len(folds))
+    nrows = math.ceil(len(folds) / ncols)
+    figure = make_subplots(
+        rows=nrows, cols=ncols,
+        horizontal_spacing=0.09 if ncols > 1 else 0.0,
+        vertical_spacing=0.16 if nrows > 1 else 0.0,
+    )
+    colors = {"train": "#1565C0", "validation": "#111111", "test": "#D32F2F"}
+    labels = {"train": "Training", "validation": "Validation", "test": "Testing"}
+    end = max(float(common_max or 0.0), 1.0)
+    step = end / int(bins)
+    for index, fold in enumerate(folds):
+        row, col = divmod(index, ncols)
+        row += 1
+        col += 1
+        one_fold = errors.loc[
+            errors["model"].eq(model) & errors["fold"].eq(fold)]
+        visible = []
+        for split in ("train", "validation", "test"):
+            if split not in datasets:
+                continue
+            values = one_fold.loc[
+                one_fold["split"].eq(split), "APE (%)"].to_numpy(dtype=float)
+            if not len(values):
+                continue
+            visible.append(split)
+            figure.add_trace(go.Histogram(
+                x=values, name=labels[split], showlegend=False,
+                xbins={"start": 0.0, "end": end + step, "size": step},
+                marker={"color": colors[split]},
+                opacity=0.50, histnorm="percent" if normalized else "",
+                hovertemplate=(
+                    f"{model} / {fold} / {split}<br>"
+                    "APE bin: %{x:.3f}%<br>Height: %{y:.2f}<extra></extra>"
+                ),
+            ), row=row, col=col)
+        figure.update_xaxes(
+            title_text="APE (%)", range=[0.0, end + step],
+            ticks="outside", ticklen=5, tickcolor="#000000",
+            showline=True, linecolor="#000000", row=row, col=col)
+        figure.update_yaxes(
+            title_text=("Percent of cases" if normalized else "Simulations")
+                       if col == 1 else "",
+            showticklabels=(col == 1),
+            ticks="outside", ticklen=5, tickcolor="#000000",
+            showline=True, linecolor="#000000", rangemode="tozero",
+            row=row, col=col)
+        key = [f"<b>Fold {str(fold).replace('fold_', '')}</b>"]
+        for split in visible:
+            key.append(
+                f'<span style="color:{colors[split]}">■</span> '
+                f'<span style="color:#000000">{labels[split]}</span>')
+        if not visible:
+            key.append("No valid APE values")
+        suffix = "" if index == 0 else str(index + 1)
+        figure.add_annotation(
+            x=0.02, y=0.98,
+            xref=f"x{suffix} domain", yref=f"y{suffix} domain",
+            xanchor="left", yanchor="top",
+            text="<br>".join(key), showarrow=False, align="left",
+            bgcolor="rgba(255,255,255,0.88)",
+            bordercolor="#BFBFBF", borderwidth=1, borderpad=4,
+            font={"family": "Courier New, Courier, monospace",
+                  "size": 14, "color": "#000000"},
+        )
+    axis_text = {"family": "Courier New, Courier, monospace",
+                 "size": 14, "color": "#000000"}
+    figure.update_xaxes(
+        showgrid=True, gridcolor="#D0D0D0", griddash="dot",
+        tickfont=axis_text,
+        title_font={**axis_text, "size": 16},
+        zeroline=False)
+    figure.update_yaxes(
+        showgrid=True, gridcolor="#D0D0D0", griddash="dot",
+        tickfont=axis_text,
+        title_font={**axis_text, "size": 16},
+        zeroline=False)
+    figure.update_layout(
+        barmode="overlay", bargap=0.04,
+        template="plotly_white", width=1260, height=145 + 460 * nrows,
+        paper_bgcolor="white", plot_bgcolor="white",
+        font={"family": "Courier New, Courier, monospace",
+              "size": 15, "color": "#000000"},
+        title={"text": f"{model} — |{direction}| APE distribution by fold",
+               "x": 0.42, "font": {"size": 23, "color": "#000000"}},
+        margin={"l": 100, "r": 45, "t": 100, "b": 75},
+        showlegend=False,
+    )
+    return figure
+
+
 def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     """One actual-vs-predicted panel per selected fold; all models/splits in each."""
     import math
@@ -734,6 +852,23 @@ with tab_overfit:
                         & of["fold"].isin(chosen_folds)
                         & of["split"].isin(selected_splits)
                     ].copy()
+                    st.markdown("#### Simulation-level APE histogram settings")
+                    hleft, hright = st.columns(2)
+                    with hleft:
+                        ape_bins = st.slider(
+                            "Histogram bins", min_value=10, max_value=80,
+                            step=5, value=30, key="overfit_ape_bin_count")
+                    with hright:
+                        ape_hist_mode = st.radio(
+                            "Histogram bar heights",
+                            ["Number of simulations", "Percentage within each dataset"],
+                            horizontal=True, key="overfit_ape_hist_mode")
+                    st.caption(
+                        "These histograms use raw displacements, without the "
+                        "0.001 mm zero threshold applied elsewhere. APE is "
+                        "undefined only when actual displacement is exactly "
+                        "zero; those and nonfinite cases are excluded. The "
+                        "histogram mean APE is MAPE for that model/fold/dataset.")
                     ux_view, uy_view = st.tabs(["Training / validation / test — Ux",
                                                 "Training / validation / test — Uy"])
                     for direction, area in [("Ux", ux_view), ("Uy", uy_view)]:
@@ -774,6 +909,58 @@ with tab_overfit:
                                     st.plotly_chart(
                                         plot, use_container_width=True,
                                         key=f"overfit_plot_{direction}_{model_name}")
+                            st.markdown("### Per-simulation absolute percentage error histograms")
+                            ape_errors = overfit_individual_ape(selected, direction)
+                            excluded_ape = len(selected) - len(ape_errors)
+                            st.caption(
+                                f"{len(ape_errors):,} valid simulation-level errors "
+                                f"({excluded_ape:,} exact-zero actual or nonfinite "
+                                "cases excluded). One model per figure, one fold "
+                                "per panel, with training/validation/testing "
+                                "distributions overlaid.")
+                            if ape_errors.empty:
+                                st.info("No valid percentage errors for the selected data.")
+                            else:
+                                max_ape = float(ape_errors["APE (%)"].max())
+                                st.caption(
+                                    f"Shared APE range: 0–{max_ape:,.2f}%. "
+                                    "No finite outlier errors are discarded.")
+                                for hist_model in chosen_models:
+                                    hist_data = ape_errors.loc[
+                                        ape_errors["model"].eq(hist_model)]
+                                    with st.expander(
+                                            f"{hist_model} — |{direction}| — fold histograms",
+                                            expanded=False):
+                                        if hist_data.empty:
+                                            st.info("No valid APE values for this model.")
+                                        else:
+                                            hist_figure = overfit_ape_fold_histograms(
+                                                ape_errors, hist_model, direction,
+                                                chosen_folds, selected_splits,
+                                                bins=ape_bins,
+                                                normalized=(ape_hist_mode ==
+                                                    "Percentage within each dataset"),
+                                                common_max=max_ape)
+                                            st.plotly_chart(
+                                                hist_figure, use_container_width=True,
+                                                key=f"overfit_ape_{direction}_{hist_model}")
+                                summary = ape_errors.groupby(
+                                    ["model", "fold", "split"], as_index=False
+                                ).agg(
+                                    simulations=("APE (%)", "size"),
+                                    raw_mape_pct=("APE (%)", "mean"),
+                                    median_ape_pct=("APE (%)", "median"),
+                                    max_ape_pct=("APE (%)", "max"),
+                                )
+                                st.markdown("**Histogram statistics — raw-displacement MAPE (%)**")
+                                st.dataframe(summary, hide_index=True,
+                                             use_container_width=True)
+                                st.download_button(
+                                    f"Download every {direction} simulation APE (CSV)",
+                                    ape_errors.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"ssi_overfitting_{direction}_individual_APE.csv",
+                                    mime="text/csv",
+                                    key=f"overfit_ape_download_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
                             per_fold = overfit_metrics_table(
                                 selected, direction, ["model", "fold", "split"])
