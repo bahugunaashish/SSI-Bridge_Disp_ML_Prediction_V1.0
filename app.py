@@ -637,6 +637,170 @@ def overfit_ape_fold_histograms(errors, model, direction, folds, datasets,
     return figure
 
 
+def overfit_four_metric_fold_summary(data, direction):
+    """Fold-wise metric summaries for the four-panel model comparison.
+
+    RMSE, R2, and residual SD: arithmetic mean +/- sample SD across folds.
+    MAPE: lognormal median and asymmetric one-log-SD interval of fold MAPEs.
+    Both use the existing 0.001 mm displacement threshold via metric_values.
+    """
+    fold_metrics = overfit_metrics_table(
+        data, direction, ["model", "fold", "split"])
+    metrics = ("RMSE (mm)", "R²", "MAPE (%)", "Error SD (mm)")
+    result = []
+    for (model, split), frame in fold_metrics.groupby(
+            ["model", "split"], sort=True):
+        for metric in metrics:
+            values = pd.to_numeric(
+                frame[metric], errors="coerce").to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if not len(values):
+                continue
+            used = values
+            method = "Arithmetic mean +/- sample SD"
+            if metric == "MAPE (%)":
+                positive = values[values > 0]
+                if len(positive) >= 2:
+                    log_values = np.log(positive)
+                    log_mean = float(log_values.mean())
+                    log_sd = float(np.std(log_values, ddof=1))
+                    center = float(np.exp(log_mean))
+                    low = float(np.exp(log_mean - log_sd))
+                    high = float(np.exp(log_mean + log_sd))
+                    used = positive
+                    method = "Lognormal median and 68% interval (one log-SD)"
+                    if len(positive) < len(values):
+                        method += "; zero-MAPE folds excluded from lognormal fit"
+                elif len(positive) == 1:
+                    center = low = high = float(positive[0])
+                    used = positive
+                    method = "One positive fold: lognormal spread unavailable"
+                else:
+                    center = low = high = 0.0
+                    method = "All fold MAPEs are zero: no lognormal fit"
+            else:
+                center = float(values.mean())
+                spread = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+                low, high = center - spread, center + spread
+            if not np.isfinite([center, low, high]).all():
+                continue
+            result.append({
+                "model": model, "split": split, "metric": metric,
+                "point": center, "lower": low, "upper": high,
+                "folds_used": len(used), "folds_finite": len(values),
+                "method": method,
+            })
+    return pd.DataFrame(result)
+
+
+def overfit_four_metric_comparison(summary, direction, selected_models,
+                                   selected_splits):
+    """Publication-style RMSE/R2/MAPE/residual-SD panel comparison."""
+    display = {
+        "meshgraphnet": "MeshGraphNet",
+        "graph_transformer": "Graph Transformer",
+        "graph_operator": "Graph Operator",
+        "gnn_tcn": "GNN_TCN",
+        "tcn_lstm": "TCN_LSTM",
+        "mlp": "MLP", "gpr": "GPR",
+    }
+    order = [name for name in display if name in selected_models]
+    order.extend(sorted(set(selected_models) - set(order)))
+    four_metrics = [
+        ("RMSE (mm)", 1, 1), ("R²", 1, 2),
+        ("MAPE (%)", 2, 1), ("Error SD (mm)", 2, 2),
+    ]
+    fig = make_subplots(
+        rows=2, cols=2, horizontal_spacing=0.18,
+        vertical_spacing=0.25,
+    )
+    styles = {
+        "train": ("#1565C0", "circle", "Training set", -0.23),
+        "validation": ("#111111", "diamond-open", "Validation set", 0.0),
+        "test": ("#D32F2F", "square-open", "Testing set", 0.23),
+    }
+    for metric, subplot_row, subplot_col in four_metrics:
+        frame = summary.loc[summary["metric"].eq(metric)]
+        for split in ("train", "validation", "test"):
+            if split not in selected_splits:
+                continue
+            color, symbol, legend_text, shift = styles[split]
+            for model in order:
+                cell = frame.loc[frame["model"].eq(model) &
+                                 frame["split"].eq(split)]
+                if cell.empty:
+                    continue
+                result = cell.iloc[0]
+                middle = float(result["point"])
+                low, high = float(result["lower"]), float(result["upper"])
+                pos = max(0.0, high - middle)
+                neg = max(0.0, middle - low)
+                if not np.isfinite([middle, pos, neg]).all():
+                    continue
+                title = display.get(model, model)
+                fig.add_trace(go.Scatter(
+                    x=[middle], y=[order.index(model) + shift],
+                    mode="markers", name=legend_text,
+                    legendgroup=split,
+                    showlegend=(metric == "RMSE (mm)" and model == order[0]),
+                    marker={
+                        "symbol": symbol, "color": color, "size": 9,
+                        "line": {"color": color, "width": 1.5},
+                    },
+                    error_x={
+                        "type": "data", "symmetric": False,
+                        "array": [pos], "arrayminus": [neg],
+                        "visible": True, "color": color,
+                        "thickness": 1.4, "width": 4,
+                    },
+                    hovertemplate=(
+                        f"{title} / {legend_text}<br>{metric}: {middle:.4g}"
+                        f"<br>Interval: [{low:.4g}, {high:.4g}]"
+                        f"<br>Folds: {int(result['folds_used'])}"
+                        f"<br>{result['method']}<extra></extra>"
+                    ),
+                ), row=subplot_row, col=subplot_col)
+        fig.update_xaxes(
+            title_text=metric, row=subplot_row, col=subplot_col)
+        fig.update_yaxes(
+            tickmode="array", tickvals=list(range(len(order))),
+            ticktext=[display.get(model, model) for model in order],
+            range=[len(order) - 0.35, -0.65],
+            row=subplot_row, col=subplot_col)
+    axis_style = {
+        "showgrid": True, "gridcolor": "#C6C6C6",
+        "griddash": "dot", "gridwidth": 1,
+        "showline": True, "linecolor": "#333333",
+        "linewidth": 1.0, "ticks": "outside",
+        "ticklen": 5, "tickcolor": "#000000", "zeroline": False,
+        "tickfont": {"family": "Courier New, Courier, monospace",
+                     "size": 13, "color": "#000000"},
+        "title_font": {"family": "Courier New, Courier, monospace",
+                       "size": 16, "color": "#000000"},
+        "automargin": True,
+    }
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
+    fig.update_layout(
+        template="plotly_white", width=1180, height=800,
+        paper_bgcolor="white", plot_bgcolor="white",
+        font={"family": "Courier New, Courier, monospace",
+              "size": 14, "color": "#000000"},
+        title={"text": f"Peak |{direction}| — cross-validation performance",
+               "x": 0.50, "font": {"size": 19, "color": "#000000"}},
+        legend={
+            "orientation": "v", "x": 0.98, "y": 0.98,
+            "xanchor": "right", "yanchor": "top",
+            "bgcolor": "rgba(255,255,255,0.92)",
+            "bordercolor": "#C6C6C6", "borderwidth": 1,
+            "font": {"size": 12, "color": "#000000"},
+        },
+        margin={"l": 145, "r": 45, "t": 80, "b": 75},
+        hovermode="closest",
+    )
+    return fig
+
+
 def overfit_fold_subplots(data, direction, fold_order, axis_ranges=None):
     """One actual-vs-predicted panel per selected fold; all models/splits in each."""
     import math
@@ -961,6 +1125,36 @@ with tab_overfit:
                                     file_name=f"ssi_overfitting_{direction}_individual_APE.csv",
                                     mime="text/csv",
                                     key=f"overfit_ape_download_{direction}")
+                            st.markdown("### Four-metric comparison across the selected folds")
+                            st.caption(
+                                "Four panels as in the reference figure: RMSE, R², "
+                                "MAPE and Error SD. Every point summarizes the "
+                                "selected folds for one model/dataset. For RMSE, "
+                                "R² and Error SD, bars show mean ± sample SD. "
+                                "MAPE alone uses a fitted lognormal distribution "
+                                "of positive fold-level MAPE values: the marker "
+                                "is its median, and asymmetric bars span one "
+                                "log-standard deviation above/below the median "
+                                "(approximately the central 68% of the fit). "
+                                "Zero fold-level MAPEs cannot be log-transformed "
+                                "and are reported in the downloadable statistics.")
+                            four_summary = overfit_four_metric_fold_summary(
+                                selected, direction)
+                            if four_summary.empty:
+                                st.info("No finite cross-validation metrics for the selected data.")
+                            else:
+                                four_figure = overfit_four_metric_comparison(
+                                    four_summary, direction, chosen_models,
+                                    selected_splits)
+                                st.plotly_chart(
+                                    four_figure, use_container_width=True,
+                                    key=f"overfit_four_metrics_{direction}")
+                                st.download_button(
+                                    f"Download {direction} four-panel summary (CSV)",
+                                    four_summary.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"ssi_four_metrics_{direction}.csv",
+                                    mime="text/csv",
+                                    key=f"overfit_four_metrics_export_{direction}")
                             st.markdown("**Metrics per model, fold, and dataset**")
                             per_fold = overfit_metrics_table(
                                 selected, direction, ["model", "fold", "split"])
