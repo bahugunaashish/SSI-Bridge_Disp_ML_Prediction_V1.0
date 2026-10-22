@@ -520,16 +520,16 @@ def overfit_metrics_table(data, direction, group_columns):
 
 
 def overfit_individual_ape(data, direction):
-    """Per-simulation absolute percentage errors from RAW displacements.
+    """Simulation-level APE using the app's 0.001 mm zero-displacement rule.
 
-    Unlike the other overfitting plots/metrics, do not round small values to
-    zero at 0.001 mm. Exact-zero actual displacement is still undefined for APE.
+    Both actual and predicted values with magnitude below 0.001 mm are zeroed.
+    Cases with adjusted zero actual displacement cannot have defined APE.
     """
     columns = ["simulation_id", "model", "fold", "split"]
-    actual = pd.to_numeric(
-        data[f"actual_{direction}_mm"], errors="coerce").to_numpy(dtype=float)
-    predicted = pd.to_numeric(
-        data[f"predicted_{direction}_mm"], errors="coerce").to_numpy(dtype=float)
+    actual = zero_small_displacements(pd.to_numeric(
+        data[f"actual_{direction}_mm"], errors="coerce").to_numpy(dtype=float))
+    predicted = zero_small_displacements(pd.to_numeric(
+        data[f"predicted_{direction}_mm"], errors="coerce").to_numpy(dtype=float))
     valid = np.isfinite(actual) & np.isfinite(predicted) & (actual != 0.0)
     output = data.loc[valid, columns].copy()
     output["Actual (mm)"] = actual[valid]
@@ -864,11 +864,11 @@ with tab_overfit:
                             ["Number of simulations", "Percentage within each dataset"],
                             horizontal=True, key="overfit_ape_hist_mode")
                     st.caption(
-                        "These histograms use raw displacements, without the "
-                        "0.001 mm zero threshold applied elsewhere. APE is "
-                        "undefined only when actual displacement is exactly "
-                        "zero; those and nonfinite cases are excluded. The "
-                        "histogram mean APE is MAPE for that model/fold/dataset.")
+                        "These histograms use the same 0.001 mm zero rule as "
+                        "the rest of this tab. Both actual and predicted "
+                        "displacements below this magnitude are set to zero. "
+                        "Cases with adjusted-zero actual displacement or "
+                        "nonfinite errors are excluded. Mean APE is MAPE.")
                     ux_view, uy_view = st.tabs(["Training / validation / test — Ux",
                                                 "Training / validation / test — Uy"])
                     for direction, area in [("Ux", ux_view), ("Uy", uy_view)]:
@@ -914,7 +914,7 @@ with tab_overfit:
                             excluded_ape = len(selected) - len(ape_errors)
                             st.caption(
                                 f"{len(ape_errors):,} valid simulation-level errors "
-                                f"({excluded_ape:,} exact-zero actual or nonfinite "
+                                f"({excluded_ape:,} adjusted-zero actual or nonfinite "
                                 "cases excluded). One model per figure, one fold "
                                 "per panel, with training/validation/testing "
                                 "distributions overlaid.")
@@ -948,11 +948,11 @@ with tab_overfit:
                                     ["model", "fold", "split"], as_index=False
                                 ).agg(
                                     simulations=("APE (%)", "size"),
-                                    raw_mape_pct=("APE (%)", "mean"),
+                                    mape_pct=("APE (%)", "mean"),
                                     median_ape_pct=("APE (%)", "median"),
                                     max_ape_pct=("APE (%)", "max"),
                                 )
-                                st.markdown("**Histogram statistics — raw-displacement MAPE (%)**")
+                                st.markdown("**Histogram statistics — threshold-adjusted MAPE (%)**")
                                 st.dataframe(summary, hide_index=True,
                                              use_container_width=True)
                                 st.download_button(
